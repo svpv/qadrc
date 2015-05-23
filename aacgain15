@@ -4,19 +4,28 @@ tmpdir=${TMPDIR:-/tmp}
 
 AACGain15()
 {
-	local db1 db2 gain
-	aacgain "$1" | tee $tmpdir/gain1.log
+	local db1 db2 vars
+	aacgain "$1" | tee $tmpdir/gain1.log >&2
 	db1=$(perl -lne 's/.*\s+dB change:\s+// and print 0+$_ and exit' $tmpdir/gain1.log)
-	bs1770gain --replaygain "$1" | tee $tmpdir/gain2.log
+	bs1770gain --replaygain "$1" | tee $tmpdir/gain2.log >&2
 	db2=$(perl -lne 's/.*integrated:.*\/\s+// and print 0+$_ and exit' $tmpdir/gain2.log)
-	gain=$(perl -e '
-		my $db = (shift() + shift) / 2;
+	vars=$(perl -e '
+		use v5.12;
+		use POSIX qw(floor);
+		my $db1 = shift;
+		my $db2 = shift;
+		my $db = ($db1 + $db2) / 2;
+		say "db1=$db1 db2=$db2 db=$db";
 		my $gain = $db / (5 * log(2) / log(10));
-		my $igain = int(0.5 + abs $gain);
-		$igain = -$igain if $igain and $gain < 0;
-		print $igain if $igain;' -- ${db1:?} ${db2:?} )
-	[ -z "$gain" ] ||
-	aacgain -g "$gain" "$1"
+		my $igain = floor(0.5 + $gain);
+		my $igain2db = $igain * (5 * log(2) / log(10));
+		my $dbleft = 0 + sprintf "%.2f", $db - $igain2db;
+		say "igain=$igain dbleft=$dbleft";
+		' -- ${db1:?} ${db2:?} )
+	local $vars
+	echo $vars
+	[ ${igain:?} = 0 ] ||
+	aacgain -g "$igain" "$1" >&2
 }
 
 for f; do
