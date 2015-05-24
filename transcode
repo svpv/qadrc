@@ -1,0 +1,36 @@
+#!/bin/bash -efux
+
+tmpdir=${TMPDIR:-/tmp}
+
+av0=$(readlink -ev "$0")
+av0dir=$(dirname "$av0")
+
+PrintIfMono()
+{
+	ffmpeg -i "$1" -vn -af pan=mono:"c0=0.5*c0+-0.5*c1",volumedetect -f null -y /dev/null >$tmpdir/ismono 2>&1
+	avg=$(grep -ao 'mean_volume: .*' $tmpdir/ismono); avg=$(set $avg && echo ${2%.*})
+	max=$(grep -ao  'max_volume: .*' $tmpdir/ismono); max=$(set $max && echo ${2%.*})
+	q999=$(perl -lne 'print -$1 if /histogram_(\d+)db/' $tmpdir/ismono |tail -1)
+	if [ ${q999:?} -le -40 ]; then
+		echo 1
+	fi
+}
+
+Transcode()
+{
+	vbr=4
+	bitrate=$(avconv -i "$1" 2>&1 |
+		  perl -ne '/^\s+Stream .* Audio: aac, .* ([1-9]\d\d?) kb/ and print $1 and exit')
+	[ ${bitrate:?} -lt 200 ] || vbr=3
+
+	gvars=$($av0dir/aacgain15 "$1")
+	local $gvars
+	local gain=${dbleft:?}
+
+	mono=$(PrintIfMono "$1")
+
+	qaac --silent --decode --gain ${gain:?} --limiter -o - "$1" |
+	lame ${mono:+-mm} -V$vbr /dev/stdin "$2"
+}
+
+Transcode "$1" "${2:-${1%.*}.mp3}"
