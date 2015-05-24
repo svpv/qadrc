@@ -5,6 +5,8 @@ tmpdir=${TMPDIR:-/tmp}
 av0=$(readlink -ev "$0")
 av0dir=$(dirname "$av0")
 
+alias lame='lame --disptime 1'
+
 PrintIfMono()
 {
 	ffmpeg -i "$1" -vn -af pan=mono:"c0=0.5*c0+-0.5*c1",volumedetect -f null -y /dev/null >$tmpdir/ismono 2>&1
