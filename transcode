@@ -28,9 +28,39 @@ Transcode()
 	local gain=${dbleft:?}
 
 	mono=$(PrintIfMono "$1")
+	echo '1 1' >$tmpdir/mono.matrix
+	mono=${mono:+--matrix-file $tmpdir/mono.matrix}
 
-	qaac --silent --decode --gain ${gain:?} --limiter -o - "$1" |
-	lame ${mono:+-mm} -V$vbr /dev/stdin "$2"
+	local drc=
+	if [ "${range%.*}" -ge 10 ]; then
+		vars=$(perl -le '
+			use v5.12;
+			my $range = shift;
+			my $dbleft = shift;
+			my $ratio = 0 + sprintf "%.2f", 1 + ($range - 9.8) / 20;
+			my $thresh = 0 + sprintf "%.1f", -30 - $dbleft - ($range - 10) / 2;
+			my $knee = 0 + sprintf "%.1f", 25 + 1.5 * $range;
+			say "ratio=$ratio thresh=$thresh knee=$knee";
+			' -- $range $dbleft)
+		local $vars
+		drc="--drc $thresh:$ratio:$knee:20:800"
+
+		local fast='-V5 -q9 --noreplaygain --nohist'
+		[ -n "$mono" ] || fast="$fast -ms"
+
+		qaac --silent --decode $mono $drc -o - "$1" |
+		lame $fast /dev/stdin $tmpdir/drc.mp3
+
+		gvars=$($av0dir/aacgain15 $tmpdir/drc.mp3)
+		local $gvars
+		gain=${db:?}
+	fi
+
+	[ "$gain" != 0 ] || gain=
+	gain=${gain:+--gain $gain}
+
+	qaac --silent --decode $mono $drc $gain --limiter -o - "$1" |
+	lame -V$vbr /dev/stdin "$2"
 }
 
 Transcode "$1" "${2:-${1%.*}.mp3}"

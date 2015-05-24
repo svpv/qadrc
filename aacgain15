@@ -4,11 +4,12 @@ tmpdir=${TMPDIR:-/tmp}
 
 AACGain15()
 {
-	local db1 db2 vars
+	local db1 db2 range vars
 	aacgain "$1" | tee $tmpdir/gain1.log >&2
 	db1=$(perl -lne 's/.*\s+dB change:\s+// and print 0+$_ and exit' $tmpdir/gain1.log)
-	bs1770gain --replaygain "$1" | tee $tmpdir/gain2.log >&2
+	bs1770gain --replaygain --range "$1" | tee $tmpdir/gain2.log >&2
 	db2=$(perl -lne 's/.*integrated:.*\/\s+// and print 0+$_ and exit' $tmpdir/gain2.log)
+	range=$(perl -lne 's/.*range:\s+// and print 0+$_ and exit' $tmpdir/gain2.log)
 	vars=$(perl -e '
 		use v5.12;
 		use POSIX qw(floor);
@@ -23,7 +24,7 @@ AACGain15()
 		say "igain=$igain dbleft=$dbleft";
 		' -- ${db1:?} ${db2:?} )
 	local $vars
-	echo $vars
+	echo $vars range=${range:?}
 	[ ${igain:?} = 0 ] ||
 	aacgain -g "$igain" "$1" >&2
 }
