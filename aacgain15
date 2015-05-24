@@ -4,7 +4,9 @@ tmpdir=${TMPDIR:-/tmp}
 
 AACGain15()
 {
-	local db1 db2 range vars
+	local db1 db2 ainfo mono range vars
+	ainfo=$(avconv -i "$1" 2>&1 |grep -m1 Audio:)
+	mono=$(grep -c ' mono,\| 1 channel' <<<"$ainfo" || [ $? = 1 ])
 	aacgain "$1" | tee $tmpdir/gain1.log >&2
 	db1=$(perl -lne 's/.*\s+dB change:\s+// and print 0+$_ and exit' $tmpdir/gain1.log)
 	bs1770gain --replaygain --range "$1" | tee $tmpdir/gain2.log >&2
@@ -15,6 +17,8 @@ AACGain15()
 		use POSIX qw(floor);
 		my $db1 = shift;
 		my $db2 = shift;
+		my $mono = shift;
+		$db2 -= 3.01 if $mono;
 		my $db = ($db1 + $db2) / 2;
 		say "db1=$db1 db2=$db2 db=$db";
 		my $gain = $db / (5 * log(2) / log(10));
@@ -22,7 +26,7 @@ AACGain15()
 		my $igain2db = $igain * (5 * log(2) / log(10));
 		my $dbleft = 0 + sprintf "%.2f", $db - $igain2db;
 		say "igain=$igain dbleft=$dbleft";
-		' -- ${db1:?} ${db2:?} )
+		' -- ${db1:?} ${db2:?} ${mono:?} )
 	local $vars
 	echo $vars range=${range:?}
 	[ ${igain:?} = 0 ] ||
