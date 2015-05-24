@@ -53,7 +53,7 @@ Transcode()
 
 		gvars=$($av0dir/aacgain15 $tmpdir/drc.mp3)
 		local $gvars
-		gain=${db:?}
+		gain=$(perl -le "print ${db:?} + (5-$vbr)*0.01")
 	fi
 
 	[ "$gain" != 0 ] || gain=
