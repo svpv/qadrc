@@ -9,11 +9,13 @@ alias lame='lame --disptime 1'
 
 PrintIfMono()
 {
-	ffmpeg -i "$1" -vn -af pan=mono:"c0=0.5*c0+-0.5*c1",volumedetect -f null -y /dev/null >$tmpdir/ismono 2>&1
-	avg=$(grep -ao 'mean_volume: .*' $tmpdir/ismono); avg=$(set $avg && echo ${2%.*})
-	max=$(grep -ao  'max_volume: .*' $tmpdir/ismono); max=$(set $max && echo ${2%.*})
-	q999=$(perl -lne 'print -$1 if /histogram_(\d+)db/' $tmpdir/ismono |tail -1)
-	if [ ${q999:?} -le -40 ]; then
+	ffmpeg -i "$1" -vn -af pan=mono:"c0=0.5*c0+-0.5*c1" \
+		-aq 5 -compression_level 7 -y $tmpdir/diff.mp3 >$tmpdir/diff.log 2>&1
+	local bitrate gain
+	bitrate=$(perl -lne 'print int $1 while /bitrate=\s+(\d\S+)/g' <$tmpdir/diff.log |tail -1)
+	$av0dir/mp3gain99 $tmpdir/diff.mp3 >$tmpdir/gain.log 2>&1
+	gain=$(perl -lne 's/.*\s+dB change:\s+// and print int $_ and exit' <$tmpdir/gain.log)
+	if [ ${bitrate:?} -lt 40 ] && [ ${gain:?} -gt 20 ]; then
 		echo 1
 	fi
 }
