@@ -7,7 +7,7 @@ AACGain15()
 	local db1 db2 ainfo mono range vars
 	ainfo=$(avconv -i "$1" 2>&1 |grep -m1 Audio:)
 	mono=$(grep -c ' mono,\| 1 channel' <<<"$ainfo" || [ $? = 1 ])
-	aacgain "$1" | tee $tmpdir/gain1.log >&2
+	aacgain -s s "$1" | tee $tmpdir/gain1.log >&2
 	db1=$(perl -lne 's/.*\s+dB change:\s+// and print 0+$_ and exit' $tmpdir/gain1.log)
 	bs1770gain --replaygain --range "$1" | tee $tmpdir/gain2.log >&2
 	db2=$(perl -lne 's/.*integrated:.*\/\s+// and print 0+$_ and exit' $tmpdir/gain2.log)
