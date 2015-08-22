@@ -44,9 +44,9 @@ Transcode()
 			use v5.12;
 			my $range = shift;
 			my $dbleft = shift;
-			my $ratio = 0 + sprintf "%.2f", 1 + ($range - 9.8) / 25;
-			my $thresh = 0 + sprintf "%.1f", -30 - $dbleft - ($range - 10) / 2;
-			my $knee = 0 + sprintf "%.1f", 30 + $range;
+			my $ratio  = 0 + sprintf "%.2f", $range / (9.9 + ($range - 9.9) / 3);
+			my $thresh = 0 + sprintf "%.1f", -15 - $range - $dbleft;
+			my $knee   = 0 + sprintf "%.1f", 2 * ($range + 10);
 			say "ratio=$ratio thresh=$thresh knee=$knee";
 			' -- $range $dbleft)
 		local $vars
