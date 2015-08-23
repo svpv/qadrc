@@ -9,11 +9,15 @@ alias lame='lame --disptime 1'
 
 PrintIfMono()
 {
-	ffmpeg -i "$1" -vn -af pan=mono:"c0=0.5*c0+-0.5*c1" \
+	ffmpeg -i "$1" -vn -af pan=mono:"c0=0.5*c0+-0.5*c1" -ar 24000 \
 		-aq 5 -compression_level 7 -y $tmpdir/diff.mp3 >$tmpdir/diff.log 2>&1
 	local bitrate gain
-	bitrate=$(perl -lne 'print int $1 while /bitrate=\s+(\d\S+)/g' <$tmpdir/diff.log |tail -1)
-	if [ ${bitrate:?} -ge 40 ]; then
+	bitrate=$(perl -lne 'print int 0.85 + $1 while /bitrate=\s+(\d\S+)/g' <$tmpdir/diff.log |tail -1)
+	if [ ${bitrate:?} -le 8 ]; then
+		echo 1
+		return
+	fi
+	if [ ${bitrate:?} -ge 32 ]; then
 		return
 	fi
 	$av0dir/mp3gain99 $tmpdir/diff.mp3 >$tmpdir/gain.log 2>&1
