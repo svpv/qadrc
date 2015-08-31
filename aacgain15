@@ -1,6 +1,7 @@
 #!/bin/bash -efu
 
 tmpdir=${TMPDIR:-/tmp}
+dry_run=
 
 AACGain15()
 {
@@ -30,8 +31,14 @@ AACGain15()
 	local $vars
 	echo $vars range=${range:?}
 	[ ${igain:?} = 0 ] ||
+	[ -n "$dry_run" ] ||
 	aacgain -g "$igain" "$1" >&2
 }
+
+if [ "${1-}" = "-n" ]; then
+	dry_run=1
+	shift
+fi
 
 for f; do
 	AACGain15 "$f"
