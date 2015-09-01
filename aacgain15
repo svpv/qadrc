@@ -6,22 +6,26 @@ dry_run=
 AACGain15()
 {
 	local db1 db2 ainfo mono range vars
-	ainfo=$(avconv -i "$1" 2>&1 |grep -m1 Audio:)
+	ffmpeg -i "$1" -af replaygain,ebur128=framelog=verbose -f null - >$tmpdir/gain.log 2>&1 ||
+		{ tail $tmpdir/gain.log; false; }
+	ainfo=$(grep -m1 Audio: $tmpdir/gain.log)
 	mono=$(grep -c ' mono,\| 1 channel' <<<"$ainfo" || [ $? = 1 ])
-	aacgain -s s "$1" | tee $tmpdir/gain1.log >&2
-	db1=$(perl -lne 's/.*\s+dB change:\s+// and print 0+$_ and exit' $tmpdir/gain1.log)
-	bs1770gain --replaygain --range "$1" | tee $tmpdir/gain2.log >&2
-	db2=$(perl -lne 's/.*integrated:.*\/\s+// and print 0+$_ and exit' $tmpdir/gain2.log)
-	range=$(perl -lne 's/.*range:\s+// and print 0+$_ and exit' $tmpdir/gain2.log)
+	db1=$(perl -lne 's/.* track_gain = // and print 0+$_ and exit' $tmpdir/gain.log)
+	db2=$(perl -lne 's/^ +I: +(?=.*LUFS)// and print 0+$_ and exit' $tmpdir/gain.log)
+	range=$(perl -lne 's/^ +LRA: +// and print 0+$_ and exit' $tmpdir/gain.log)
 	vars=$(perl -e '
 		use v5.12;
 		use POSIX qw(floor);
 		my $db1 = shift;
 		my $db2 = shift;
+		$db2 = -18 - $db2;
 		my $mono = shift;
+		$db1 -= 3.01 if $mono;
 		$db2 -= 3.01 if $mono;
+		$db1 = 0 + sprintf "%.2f", $db1;
+		$db2 = 0 + sprintf "%.2f", $db2;
 		my $db = ($db1 + $db2) / 2;
-		say "db1=$db1 db2=$db2 db=$db";
+		say "db1=$db1 db2=$db2 db=", 0 + sprintf "%.2f", $db;
 		my $gain = $db / (5 * log(2) / log(10));
 		my $igain = floor(0.5 + $gain);
 		my $igain2db = $igain * (5 * log(2) / log(10));
