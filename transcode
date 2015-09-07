@@ -5,45 +5,33 @@ tmpdir=${TMPDIR:-/tmp}
 av0=$(readlink -ev "$0")
 av0dir=$(dirname "$av0")
 
-alias lame='lame --disptime 1'
-
-PrintIfMono()
-{
-	ffmpeg -i "$1" -vn -af pan=mono:"c0=0.5*c0+-0.5*c1" -ar 24000 \
-		-aq 5 -compression_level 7 -y $tmpdir/diff.mp3 >$tmpdir/diff.log 2>&1
-	local bitrate gain
-	bitrate=$(perl -lne 'print int 0.85 + $1 while /bitrate=\s+(\d\S+)/g' <$tmpdir/diff.log |tail -1)
-	if [ ${bitrate:?} -le 8 ]; then
-		echo 1
-		return
-	fi
-	if [ ${bitrate:?} -ge 32 ]; then
-		return
-	fi
-	$av0dir/mp3gain99 $tmpdir/diff.mp3 >$tmpdir/gain.log 2>&1
-	gain=$(perl -lne 's/.*\s+dB change:\s+// and print int $_ and exit' <$tmpdir/gain.log)
-	if [ ${gain:?} -gt 20 ]; then
-		echo 1
-	fi
-}
+# autodetect mono
+mono=
 
 Transcode()
 {
-	vbr=4
-	bitrate=$(avconv -i "$1" 2>&1 |
-		  perl -ne '/^\s+Stream .* Audio: aac, .* ([1-9]\d\d?) kb/ and print $1 and exit')
-	[ ${bitrate:?} -lt 200 ] || vbr=3
+	ffmpeg	-i "$1" -vn -af replaygain,ebur128=framelog=verbose,pan=mono:'c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
+		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 
-	gvars=$($av0dir/aacgain15 "$1")
-	local $gvars
-	local gain=${dbleft:?}
+	local vars
+	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
+	local $vars
 
-	mono=$(PrintIfMono "$1")
+	local vbr=4
+	[ ${g0brate:?} -lt 200 ] || vbr=3
+
+	local gain=${g1db:?}
+
+	case $mono in
+		no) mono= ;;
+		'') mono=$(perl -e "print 1 if ${g2db1:?} - $gain > 20") ;;
+	esac
+
 	echo '1 1' >$tmpdir/mono.matrix
 	mono=${mono:+--matrix-file $tmpdir/mono.matrix}
 
 	local drc=
-	if [ "${range%.*}" -ge 10 ]; then
+	if [ "${g1range%.*}" -ge 10 ]; then
 		vars=$(perl -le '
 			use v5.12;
 			my $range = shift;
@@ -52,19 +40,16 @@ Transcode()
 			my $thresh = 0 + sprintf "%.1f", -15 - $range - $dbleft;
 			my $knee   = 0 + sprintf "%.1f", 2 * ($range + 10);
 			say "ratio=$ratio thresh=$thresh knee=$knee";
-			' -- $range $dbleft)
+			' -- $g1range $gain)
 		local $vars
 		drc="--drc $thresh:$ratio:$knee:20:800"
 
-		local fast='-V5 -q9 --noreplaygain --nohist'
-		[ -n "$mono" ] || fast="$fast -ms"
-
 		qaac --silent --decode $mono $drc -o - "$1" |
-		lame $fast /dev/stdin $tmpdir/drc.mp3
-
-		gvars=$($av0dir/aacgain15 $tmpdir/drc.mp3)
-		local $gvars
-		gain=$(perl -le "print ${db:?} + (5-$vbr)*0.01")
+		ffmpeg	-i - -vn -af replaygain,ebur128=framelog=verbose \
+			-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
+		vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
+		local $vars
+		gain=${g1db:?}
 	fi
 
 	[ "$gain" != 0 ] || gain=
@@ -72,6 +57,8 @@ Transcode()
 
 	qaac --silent --decode $mono $drc $gain --limiter -o - "$1" |
 	lame -V$vbr /dev/stdin "$2"
+
+	rm $tmpdir/gain$$.log
 }
 
 Transcode "$1" "${2:-${1%.*}.mp3}"
