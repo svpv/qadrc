@@ -1,9 +1,19 @@
 #!/usr/bin/perl -n
 use v5.12;
 
+our $B;
+if (/^Input #/../^Output #/ and /^\s*Duration: .*(, bitrate.+)/) {
+	$B = $1;
+}
+
 our %A;
 if (/^Input #/../^Output #/ and s/^\s*Stream #(\d[:.]\d)(?:\([^)]+\))?: Audio: //) {
-	$A{$1} = $_;
+	$A{$1} = $_ . $B;
+	undef $B;
+}
+
+if (/^Input #0, (\w+)/) {
+	say "g0format=$1";
 }
 
 our $ch;

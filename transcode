@@ -8,19 +8,99 @@ av0dir=$(dirname "$av0")
 # autodetect mono
 mono=
 
+# use deafult aac priming
+priming=
+
+# use dynamic range compression when appropriate
+no_drc=
+
+# seek and duration support
+ff_ss= ff_to= ff_t=
+
+# quality control
+VBR= TVBR=
+
+. $av0dir/tc2ms.sh
+
 Transcode()
 {
-	ffmpeg	-i "$1" -vn -af replaygain,ebur128=framelog=verbose,pan=mono:'c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
+	# -t overrides -to
+	local ms1 ms2 ms3
+	if [ -n "$ff_t" ]; then
+		if [ -z "$ff_ss" ]; then
+			ff_to=$ff_t
+		else
+			ms1=$(tc2ms "$ff_ss")
+			ms2=$(tc2ms "$ff_t")
+			ms3=$(($ms1+$ms2))
+			ff_to=$(ms2tc $ms3)
+		fi
+	elif [ -n "$ff_to" ]; then
+		if [ -z "$ff_ss" ]; then
+			ff_t=$ff_to
+		else
+			ms1=$(tc2ms "$ff_ss")
+			ms2=$(tc2ms "$ff_to")
+			ms3=$(($ms2-$ms1))
+			ff_t=$(ms2tc $ms3)
+		fi
+	fi
+
+	ffmpeg ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
+		-af replaygain,ebur128=framelog=verbose,pan=mono:'c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
 		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 
 	local vars
 	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
 	local $vars
 
-	local vbr=4
-	[ ${g0brate:?} -lt 200 ] || vbr=3
+	local vbr=4 tvbr=82
+	[ ${g0brate:?} -lt 180 ] || vbr=3 tvbr=91
 
 	local gain=${g1db:?}
+
+	local codec=${g0codec:?}
+	local format=${g0format:?}
+
+	local qa_can_decode=1
+	local ff_decode_pre=
+	if [ $codec = ac3 ]; then
+		qa_can_decode=
+	fi
+	if [ $codec = mp2 ]; then
+		qa_can_decode=
+		ff_decode_pre='-acodec mp2float'
+	fi
+	if [ $codec = mp3 ]; then
+		ff_decode_pre='-acodec mp3float'
+	fi
+	if [ $format = matroska ] || [ $format = flv ]; then
+		qa_can_decode=
+	fi
+
+	local ff_ssto="${ff_ss:+    -ss $ff_ss} ${ff_to:+  -to $ff_to}"
+	local qa_ssto="${ff_ss:+--start $ff_ss} ${ff_to:+--end $ff_to}"
+
+	local arg1="$1" arg2="$2"
+
+	qaac1enc()
+	{
+		if [ -n "$qa_can_decode" ]; then
+			qaac -o "$arg2" "$@" $qa_ssto "$arg1"
+		else
+			ffmpeg -loglevel error $ff_decode_pre -i "$arg1" $ff_ssto -acodec pcm_f32le -f wav - |
+			qaac -o "$arg2" "$@" -
+		fi
+	}
+	qaac1dec()
+	{
+		if [ -n "$qa_can_decode" ]; then
+			qaac --silent --decode -o - "$@" $qa_ssto "$arg1"
+		else
+			ffmpeg -loglevel error $ff_decode_pre -i "$arg1" $ff_ssto -acodec pcm_f32le -f wav - |
+			qaac --silent --decode -o /dev/fd/3 "$@" - 3>&1 1>&2
+		fi
+	}
 
 	case $mono in
 		no) mono= ;;
@@ -31,7 +111,7 @@ Transcode()
 	mono=${mono:+--matrix-file $tmpdir/mono.matrix}
 
 	local drc=
-	if [ "${g1range%.*}" -ge 10 ]; then
+	if [ -z "$no_drc" ] && [ "${g1range%.*}" -ge 10 ]; then
 		vars=$(perl -le '
 			use v5.12;
 			my $range = shift;
@@ -44,21 +124,49 @@ Transcode()
 		local $vars
 		drc="--drc $thresh:$ratio:$knee:20:800"
 
-		qaac --silent --decode $mono $drc -o - "$1" |
+		set -o pipefail
+		qaac1dec $mono $drc |
 		ffmpeg	-i - -vn -af replaygain,ebur128=framelog=verbose \
 			-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
+		set +o pipefail
+
 		vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
 		local $vars
 		gain=${g1db:?}
 	fi
 
+	rm $tmpdir/gain$$.log
+
 	[ "$gain" != 0 ] || gain=
 	gain=${gain:+--gain $gain}
 
-	qaac --silent --decode $mono $drc $gain --limiter -o - "$1" |
-	lame -V$vbr /dev/stdin "$2"
-
-	rm $tmpdir/gain$$.log
+	set -o pipefail
+	if [[ $2 != *.[Mm][Pp]3 ]]; then
+		priming=${priming:+--num-priming $priming}
+		qaac1enc $mono $drc $gain --limiter $priming --tvbr ${TVBR:-$tvbr}
+	else
+		qaac1dec $mono $drc $gain --limiter |
+		lame -V${VBR:-$vbr} /dev/stdin "$2"
+	fi
+	set +o pipefail
 }
+
+argv=$(getopt -n "${0##*/}" -o t:V: -al mono,stereo,no-drc,priming:,ss:,to:,tvbr: -- "$@")
+eval set -- "$argv"
+while :; do
+	case "$1" in
+		--mono) mono=yes; shift ;;
+		--stereo) mono=no; shift ;;
+		--no-drc) no_drc=1; shift ;;
+		--priming) priming=${2:?}; shift 2 ;;
+		--ss) ff_ss=${2:?}; shift 2 ;;
+		--to) ff_to=${2:?}; shift 2 ;;
+		-t) ff_t=${2:?}; shift 2 ;;
+		-V) VBR=${2:?}; shift 2 ;;
+		--tvbr) TVBR=${2:?}; shift 2 ;;
+		--) shift; break ;;
+		*) echo >&2 "unrecognized option: $1"; false ;;
+	esac
+done
 
 Transcode "$1" "${2:-${1%.*}.mp3}"
