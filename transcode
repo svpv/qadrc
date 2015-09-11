@@ -46,7 +46,12 @@ Transcode()
 		fi
 	fi
 
-	ffmpeg ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
+	local ff_decode_pre=
+	if [[ $1 = *.[Mm][Pp]3 ]]; then
+		ff_decode_pre='-acodec mp3float'
+	fi
+
+	ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
 		-af replaygain,ebur128=framelog=verbose,pan='mono|c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
 		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 
@@ -61,7 +66,6 @@ Transcode()
 	local format=${g0format:?}
 
 	local qa_can_decode=1
-	local ff_decode_pre=
 	if [ $codec = ac3 ]; then
 		qa_can_decode=
 	fi

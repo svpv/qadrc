@@ -8,7 +8,11 @@ dry_run=
 
 AACGain15()
 {
-	ffmpeg	-i "$1" -vn -af replaygain,ebur128=framelog=verbose \
+	local ff_decode_pre=
+	if [[ $1 = *.[Mm][Pp]3 ]]; then
+		ff_decode_pre='-acodec mp3float'
+	fi
+	ffmpeg $ff_decode_pre -i "$1" -vn -af replaygain,ebur128=framelog=verbose \
 		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 	local vars
 	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
