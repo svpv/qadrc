@@ -47,7 +47,7 @@ Transcode()
 	fi
 
 	ffmpeg ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
-		-af replaygain,ebur128=framelog=verbose,pan=mono:'c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
+		-af replaygain,ebur128=framelog=verbose,pan='mono|c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
 		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 
 	local vars
@@ -56,8 +56,6 @@ Transcode()
 
 	local vbr=4 tvbr=82
 	[ ${g0brate:?} -lt 180 ] || vbr=3 tvbr=91
-
-	local gain=${g1db:?}
 
 	local codec=${g0codec:?}
 	local format=${g0format:?}
@@ -83,32 +81,44 @@ Transcode()
 
 	local arg1="$1" arg2="$2"
 
-	qaac1enc()
-	{
-		if [ -n "$qa_can_decode" ]; then
-			qaac -o "$arg2" "$@" $qa_ssto "$arg1"
-		else
-			ffmpeg -loglevel error $ff_decode_pre -i "$arg1" $ff_ssto -acodec pcm_f32le -f wav - |
-			qaac -o "$arg2" "$@" -
-		fi
-	}
-	qaac1dec()
-	{
-		if [ -n "$qa_can_decode" ]; then
-			qaac --silent --decode -o - "$@" $qa_ssto "$arg1"
-		else
-			ffmpeg -loglevel error $ff_decode_pre -i "$arg1" $ff_ssto -acodec pcm_f32le -f wav - |
-			qaac --silent --decode -o /dev/fd/3 "$@" - 3>&1 1>&2
-		fi
-	}
-
 	case $mono in
 		no) mono= ;;
-		'') mono=$(perl -e "print 1 if ${g2db1:?} - $gain > 20") ;;
+		'') mono=$(perl -e "print 1 if ${g2db1:?} - ${g1db:?} > 20") ;;
 	esac
 
+	mono=${mono:+--matrix-file=$tmpdir/mono.matrix}
 	echo '1 1' >$tmpdir/mono.matrix
-	mono=${mono:+--matrix-file $tmpdir/mono.matrix}
+
+	# ff1dec applies ssto, mono, and possibly gain
+	ff1dec()
+	{
+		local af=${mono:+pan='mono|c0=0.5*c0+0.5*c1'${1:+,}}${1:+volume=${1#*=}dB}
+		ffmpeg -loglevel error $ff_decode_pre -i "$arg1" $ff_ssto ${af:+-af $af} -acodec pcm_f32le -f wav -
+	}
+
+	local gain=
+
+	qa1enc()
+	{
+		if [ -n "$qa_can_decode" ]; then
+			qaac -o "$arg2" $qa_ssto $mono $gain "$@" "$arg1"
+		else
+			ff1dec |
+			qaac -o "$arg2"                $gain "$@" -
+		fi
+	}
+
+	qa1dec()
+	{
+		if [ -n "$qa_can_decode" ]; then
+			qaac --silent --decode -o - $qa_ssto $mono $gain "$@" "$arg1"
+		elif [ -z "$*" ]; then
+			ff1dec $gain
+		else
+			ff1dec |
+			qaac --silent --decode -o /dev/fd/3        $gain "$@" - 3>&1 1>&2
+		fi
+	}
 
 	local drc=
 	if [ -z "$no_drc" ] && [ "${g1range%.*}" -ge 10 ]; then
@@ -120,32 +130,37 @@ Transcode()
 			my $thresh = 0 + sprintf "%.1f", -15 - $range - $dbleft;
 			my $knee   = 0 + sprintf "%.1f", 2 * ($range + 10);
 			say "ratio=$ratio thresh=$thresh knee=$knee";
-			' -- $g1range $gain)
+			' -- $g1range $g1db)
 		local $vars
 		drc="--drc $thresh:$ratio:$knee:20:800"
 
 		set -o pipefail
-		qaac1dec $mono $drc |
+		qa1dec $drc |
 		ffmpeg	-i - -vn -af replaygain,ebur128=framelog=verbose \
 			-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 		set +o pipefail
 
 		vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
 		local $vars
-		gain=${g1db:?}
 	fi
 
 	rm $tmpdir/gain$$.log
 
+	gain=${g1db:?}
+
+	local limiter
+	limiter=$(perl -le "print 1 if ${g1peak:?} + $gain > -0.071")
+	limiter=${limiter:+--limiter}
+
 	[ "$gain" != 0 ] || gain=
-	gain=${gain:+--gain $gain}
+	gain=${gain:+--gain=$gain}
 
 	set -o pipefail
 	if [[ $2 != *.[Mm][Pp]3 ]]; then
-		priming=${priming:+--num-priming $priming}
-		qaac1enc $mono $drc $gain --limiter $priming --tvbr ${TVBR:-$tvbr}
+		priming=${priming:+--num-priming=$priming}
+		qa1enc $drc $limiter $priming --tvbr=${TVBR:-$tvbr}
 	else
-		qaac1dec $mono $drc $gain --limiter |
+		qa1dec $drc $limiter |
 		lame -V${VBR:-$vbr} /dev/stdin "$2"
 	fi
 	set +o pipefail

@@ -38,6 +38,17 @@ if (/replaygain.* track_gain = (\S+)/) {
 	say "g${n}db1=$db1[-1]";
 }
 
+our @peak;
+if (/replaygain.* track_peak = (\S+)/) {
+	my $f = 0 + $1;
+	my $db = 20 * log($f) / log(10);
+	$db += 3.01 unless $ch == 2 and not @peak;
+	$db = 0 + sprintf "%.2f", $db;
+	push @peak, $db;
+	my $n = @peak;
+	say "g${n}peak=$peak[-1]";
+}
+
 our @db2;
 if (/^ +I: +(?=.*LUFS)(\S+)/) {
 	my $db = 0 + $1;
