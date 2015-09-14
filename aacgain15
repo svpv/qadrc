@@ -5,6 +5,7 @@ av0dir=$(dirname "$av0")
 
 tmpdir=${TMPDIR:-/tmp}
 dry_run=
+noclip=
 
 AACGain15()
 {
@@ -18,14 +19,21 @@ AACGain15()
 	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
 	local $vars
 	echo $vars
-	[ ${g1igain:?} = 0 ] ||
+	local igain=${g1igain:?}
+	[ -z "$noclip" ] || gain=${g1igaink:?}
+	[ "$igain" = 0 ] ||
 	[ -n "$dry_run" ] ||
-	aacgain -g "$g1igain" "$1" >&2
+	aacgain -g "$igain" "$1" >&2
 	rm $tmpdir/gain$$.log
 }
 
 if [ "${1-}" = "-n" ]; then
 	dry_run=1
+	shift
+fi
+
+if [ "${1-}" = "-k" ]; then
+	noclip=1
 	shift
 fi
 

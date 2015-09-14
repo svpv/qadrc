@@ -76,10 +76,19 @@ END {
 		my $n = $i + 1;
 		my $igain = floor 0.5 + $db / (5 * log(2) / log(10));
 		my $igain2db = $igain * (5 * log(2) / log(10));
-		my $dbleft = 0 + sprintf "%.2f", $db - $igain2db;
+		my $igaink = $igain;
+		my $igain2dbk = $igain2db;
+		while ($peak[$i] + $igain2dbk > 0.001) {
+			$igaink--;
+			$igain2dbk = $igaink * (5 * log(2) / log(10));
+		}
+		my $dbleft =  0 + sprintf "%.2f", $db - $igain2db;
+		my $dbleftk = 0 + sprintf "%.2f", $db - $igain2dbk;
 		$db = 0 + sprintf "%.2f", $db;
 		say "g${n}db=$db";
 		say "g${n}igain=$igain";
+		say "g${n}igaink=$igaink";
 		say "g${n}dbleft=$dbleft";
+		say "g${n}dbleftk=$dbleftk";
 	}
 }
