@@ -166,8 +166,10 @@ Transcode()
 
 	set -o pipefail
 	if [[ $2 != *.[Mm][Pp]3 ]]; then
+		adts=
+		[[ $2 != *.[Aa][Aa][Cc] ]] || adts='--adts'
 		priming=${priming:+--num-priming=$priming}
-		qa1enc $drc $limiter $priming --tvbr=${TVBR:-$tvbr}
+		qa1enc $drc $limiter $priming $adts --tvbr=${TVBR:-$tvbr}
 	else
 		qa1dec $drc $limiter |
 		lame -V${VBR:-$vbr} /dev/stdin "$2"
