@@ -24,8 +24,13 @@ VBR= TVBR=
 
 Transcode()
 {
-	# -t overrides -to
 	local ms1 ms2 ms3
+	# treat -ss 0 as no -ss
+	if [ -n "$ff_ss" ]; then
+		ms1=$(tc2ms "$ff_ss")
+		[ $ms1 -gt 0 ] || ff_ss=
+	fi
+	# -t overrides -to
 	if [ -n "$ff_t" ]; then
 		if [ -z "$ff_ss" ]; then
 			ff_to=$ff_t
