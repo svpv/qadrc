@@ -20,7 +20,19 @@ ff_ss= ff_to= ff_t=
 # quality control
 VBR= TVBR=
 
-. $av0dir/tc2ms.sh
+tc2ms()
+{
+	perl -le '
+		@s = reverse split /:/, shift;
+		$s = $s[0] + 60 * $s[1] + 3600 * $s[2];
+		print int 0.5 + $s * 1000;
+		' -- "$@"
+}
+
+ms2tc()
+{
+	perl -le "print $1 / 1000"
+}
 
 Transcode()
 {
