@@ -141,6 +141,18 @@ Transcode()
 		fi
 	}
 
+	ff1enc()
+	{
+		if [ -n "$*" ]; then
+			qa1dec "$@" |
+			lame -V${VBR:-$vbr} /dev/stdin "$arg2"
+			return
+		fi
+		set -- $gain
+		local af=${mono:+pan='mono|c0=0.5*c0+0.5*c1'${1:+,}}${1:+volume=${1#*=}dB}
+		ffmpeg $ff_decode_pre -i "$arg1" $ff_ssto ${af:+-af $af} -aq ${VBR:-$vbr} -y "$arg2"
+	}
+
 	local drc=
 	if [ -z "$no_drc" ] && [ "${g1range%.*}" -ge 10 ]; then
 		vars=$(perl -le '
@@ -183,8 +195,7 @@ Transcode()
 		priming=${priming:+--num-priming=$priming}
 		qa1enc $drc $limiter $priming $adts --tvbr=${TVBR:-$tvbr}
 	else
-		qa1dec $drc $limiter |
-		lame -V${VBR:-$vbr} /dev/stdin "$2"
+		ff1enc $drc $limiter
 	fi
 	set +o pipefail
 }
