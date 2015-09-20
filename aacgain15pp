@@ -40,7 +40,7 @@ if (/replaygain.* track_gain = (\S+)/) {
 
 our @peak;
 if (/replaygain.* track_peak = (\S+)/) {
-	my $f = 0 + $1;
+	my $f = (0 + $1) || 1e-5;
 	my $db = 20 * log($f) / log(10);
 	$db += 3.01 unless $ch == 2 and not @peak;
 	$db = 0 + sprintf "%.2f", $db;
