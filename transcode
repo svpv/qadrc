@@ -97,6 +97,12 @@ Transcode()
 		qa_can_decode=
 	fi
 
+	local downmix=
+	if [ ${g0ch:?} -gt 2 ]; then
+		downmix='ocl=stereo'
+		qa_can_decode=
+	fi
+
 	local ff_ssto="${ff_ss:+    -ss $ff_ss} ${ff_to:+  -to $ff_to}"
 	local qa_ssto="${ff_ss:+--start $ff_ss} ${ff_to:+--end $ff_to}"
 
@@ -110,10 +116,11 @@ Transcode()
 	mono=${mono:+--matrix-file=$tmpdir/mono.matrix}
 	echo '1 1' >$tmpdir/mono.matrix
 
-	# ff1dec applies ssto, mono, and possibly gain
+	# ff1dec applies ssto, downmix, mono, and possibly gain
 	ff1dec()
 	{
 		local af=${mono:+pan='mono|c0=0.5*c0+0.5*c1'${1:+,}}${1:+volume=${1#*=}dB}
+		af=${downmix:+aresample=$downmix${af:+,}}$af
 		ffmpeg -loglevel error $ff_decode_pre -i "$arg1" $ff_ssto ${af:+-af $af} -acodec pcm_f32le -f wav -
 	}
 
@@ -150,6 +157,7 @@ Transcode()
 		fi
 		set -- $gain
 		local af=${mono:+pan='mono|c0=0.5*c0+0.5*c1'${1:+,}}${1:+volume=${1#*=}dB}
+		af=${downmix:+aresample=$downmix${af:+,}}$af
 		ffmpeg $ff_decode_pre -i "$arg1" $ff_ssto ${af:+-af $af} -aq ${VBR:-$vbr} -y "$arg2"
 	}
 

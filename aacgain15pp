@@ -24,6 +24,7 @@ if (/^Stream mapping/../^Press/ and /^\s*Stream #(\d[:.]\d) -> /) {
 	say "g0brate=$1" if /\b([1-9]\d{1,3}) kb/;
 	$ch =  1 if /\bmono\b/;
 	$ch =  2 if /\bstereo\b/;
+	$ch =  5 if /, 5\.1\b/;
 	$ch = $1 if /\b(\d) channel/;
 	say "g0ch=$ch";
 }
