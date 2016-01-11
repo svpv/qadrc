@@ -1,84 +1,45 @@
-#include <cstring>
-#include <vector>
-#include "iointer.h"
-#include "cautil.h"
+#include <stddef.h>
+#include <math.h>
+#include "libavutil/channel_layout.h"
+#include "avfilter.h"
+#include "audio.h"
+#include "internal.h"
 
-class SoftClipper {
-    int m_nchannels;
-    float m_thresh;
-    std::vector<std::vector<float> > m_buffer;
-    std::vector<size_t> m_processed;
-public:
-    explicit SoftClipper(int nchannels, float threshold=0.9921875f)
-	: m_nchannels(nchannels), m_thresh(threshold)
-    {
-	m_buffer.resize(nchannels);
-	m_processed.resize(nchannels);
-    }
-    void process(const float *in, size_t nin, float *out, size_t *nout);
-};
+typedef struct QALimiterContext {
+    float *buffer[8];
+    size_t bufsiz[8];
+    size_t processed[8];
+} QALimiterContext;
 
-class Limiter: public FilterBase {
-    SoftClipper m_clipper;
-    std::vector<uint8_t> m_ibuffer;
-    std::vector<float>   m_fbuffer;
-    AudioStreamBasicDescription m_asbd;
-public:
-    Limiter(const std::shared_ptr<ISource> &source)
-	: FilterBase(source),
-	  m_clipper(source->getSampleFormat().mChannelsPerFrame)
-    {
-	const AudioStreamBasicDescription &asbd = source->getSampleFormat();
-	m_asbd = cautil::buildASBDForPCM(asbd.mSampleRate,
-					 asbd.mChannelsPerFrame, 32,
-					 kAudioFormatFlagIsFloat);
-    }
-    const AudioStreamBasicDescription &getSampleFormat() const
-    {
-	return m_asbd;
-    }
-    size_t readSamples(void *buffer, size_t nsamples)
-    {
-	if (m_fbuffer.size() < nsamples * m_asbd.mChannelsPerFrame)
-	    m_fbuffer.resize(nsamples * m_asbd.mChannelsPerFrame);
-	size_t nin, nout;
-	do {
-	    nin = readSamplesAsFloat(source(), &m_ibuffer, m_fbuffer.data(),
-				     nsamples);
-	    nout = nsamples;
-	    m_clipper.process(m_fbuffer.data(), nin,
-			      static_cast<float*>(buffer), &nout);
-	} while (nin > 0 && nout == 0);
-	return nout;
-    }
-};
+#define m_thresh 0.9921875f
 
-/* cpp */
-#include "limiter.h"
+#define m_buffer s->buffer
+#define m_bufsiz s->bufsiz
+#define m_processed s->processed
 
-namespace {
-    template <typename T> T clip(T x, T low, T high)
-    {
-	return std::max(low, std::min(high, x));
-    }
-}
-
-void SoftClipper::process(const float *in, size_t nin, float *out, size_t *nout)
+static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
 {
-    for (int n = 0; n < m_nchannels; ++n) {
-	std::vector<float> &x = m_buffer[n];
-	x.reserve(x.size() + nin);
-	for (size_t i = 0; i < nin; ++i)
-	    x.push_back(clip(in[i * m_nchannels + n],
-			     -3.0f * m_thresh, 3.0f * m_thresh));
+    AVFilterContext *ctx = inlink->dst;
+    QALimiterContext *s = ctx->priv;
 
-	ssize_t limit = x.size();
+    const int nin = frame->nb_samples;
+    const int m_nchannels = inlink->channels;
+    for (int n = 0; n < m_nchannels; ++n) {
+	// fill the buffer
+	float *x = m_buffer[n] = av_realloc_f(m_buffer[n], m_bufsiz[n] + nin, sizeof(float));
+	memcpy(x + m_bufsiz[n], frame->extended_data[n], nin * sizeof(float));
+	m_bufsiz[n] += nin;
+	// find the end limit up to which the buffer can be processed;
+	// that is, up to the last intersection with x-axis
+	ssize_t limit = m_bufsiz[n];
 	if (limit > 0 && nin > 0) {
 	    float last = x[limit-1];
 	    for (; limit > 0 && x[limit-1] * last > 0; --limit)
 		;
 	}
+	// recall the last limit, the end at which we stopped last time
 	ssize_t end = m_processed[n];
+	// fix the spikes between the last end and the new end
 	while (end < limit) {
 	    ssize_t peak_pos = end;
 	    for (; peak_pos < limit; ++peak_pos)
@@ -87,7 +48,7 @@ void SoftClipper::process(const float *in, size_t nin, float *out, size_t *nout)
 	    if (peak_pos == limit)
 		break;
 	    ssize_t start = peak_pos;
-	    float peak = std::abs(x[peak_pos]);
+	    float peak = fabsf(x[peak_pos]);
 
 	    while (start > end && x[peak_pos] * x[start] >= 0)
 		--start;
@@ -95,7 +56,7 @@ void SoftClipper::process(const float *in, size_t nin, float *out, size_t *nout)
 	    for (end = peak_pos + 1; end < limit; ++end) {
 		if (x[peak_pos] * x[end] < 0)
 		    break;
-		float y = std::abs(x[end]);
+		float y = fabsf(x[end]);
 		if (y > peak) {
 		    peak = y;
 		    peak_pos = end;
@@ -118,20 +79,74 @@ void SoftClipper::process(const float *in, size_t nin, float *out, size_t *nout)
 	}
 	m_processed[n] = limit;
     }
-    size_t prod = std::min(*nout, *std::min_element(m_processed.begin(),
-						    m_processed.end()));
-    size_t k = 0;
-    for (size_t i = 0; i < prod; ++i)
-	for (int n = 0; n < m_nchannels; ++n)
-	    out[k++] = m_buffer[n][i];
+    size_t prod = 2 * nin;
+    for (int n = 0; n < m_nchannels; ++n)
+	if (m_processed[n] < prod)
+	    prod = m_processed[n];
+
+    if (prod < 1) {
+	av_frame_free(&frame);
+	return 0;
+    }
+
+    AVFrame *out_frame = ff_get_audio_buffer(inlink, prod);
+    av_frame_copy_props(out_frame, frame);
+    av_frame_free(&frame);
+
+    for (int n = 0; n < m_nchannels; ++n)
+	memcpy(out_frame->extended_data[n], s->buffer[n], prod * sizeof(float));
 
     for (int n = 0; n < m_nchannels; ++n) {
-	std::vector<float> &x = m_buffer[n];
-	if (x.size() && prod) {
-	    std::rotate(x.begin(), x.begin() + prod, x.end());
-	    x.resize(x.size() - prod);
+	float *x = m_buffer[n];
+	if (m_bufsiz[n] && prod) {
+	    memmove(x, x + prod, (m_bufsiz[n] - prod) * sizeof(float));
+	    m_bufsiz[n] -= prod;
 	    m_processed[n] -= prod;
 	}
     }
-    *nout = prod;
+
+    return ff_filter_frame(ctx->outputs[0], out_frame);
 }
+
+static int query_formats(AVFilterContext *ctx)
+{
+    AVFilterFormats *formats = NULL;
+    AVFilterChannelLayouts *layouts;
+
+    ff_add_format(&formats, AV_SAMPLE_FMT_FLT);
+    ff_set_common_formats(ctx, formats);
+
+    layouts = ff_all_channel_layouts();
+    ff_set_common_channel_layouts(ctx, layouts);
+
+    formats = ff_all_samplerates();
+    ff_set_common_samplerates(ctx, formats);
+
+    return 0;
+}
+
+static const AVFilterPad inputs[] = {
+    {
+        .name         = "default",
+        .type         = AVMEDIA_TYPE_AUDIO,
+        .filter_frame = filter_frame,
+    },
+    { NULL }
+};
+
+static const AVFilterPad outputs[] = {
+    {
+        .name = "default",
+        .type = AVMEDIA_TYPE_AUDIO,
+    },
+    { NULL }
+};
+
+AVFilter ff_af_qalimiter = {
+    .name          = "qalimiter",
+    .description   = NULL_IF_CONFIG_SMALL("qaac soft limiter"),
+    .query_formats = query_formats,
+    .inputs        = inputs,
+    .outputs       = outputs,
+    .priv_size     = sizeof(QALimiterContext),
+};
