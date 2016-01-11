@@ -1,137 +1,197 @@
-#ifndef COMPRESSOR_H
-#define COMPRESSOR_H
+#include <stdlib.h>
+#include <math.h>
+#include "libavutil/opt.h"
+#include "libavutil/channel_layout.h"
+#include "avfilter.h"
+#include "internal.h"
 
-#include "iointer.h"
-#include "util.h"
+typedef struct QADRCContext {
+    const AVClass *class;
 
-class Compressor: public FilterBase {
-    const double m_threshold;
-    const double m_slope;
-    const double m_knee_width;
-    const double m_attack;
-    const double m_release;
+    double thresh;
+    double ratio;
+    double knee;
+    double attack;
+    double release;
 
-    const double m_Tlo;
-    const double m_Thi;
-    const double m_knee_factor;
+    double slope;
+    double Tlo;
+    double Thi;
+    double knee_factor;
 
-    double m_yR;
-    double m_yA;
-    std::vector<uint8_t > m_pivot;
-    AudioStreamBasicDescription m_asbd;
-public:
-    Compressor(const std::shared_ptr<ISource> &src,
-               double threshold, double ratio, double knee_width,
-               double attack, double release);
-    const AudioStreamBasicDescription &getSampleFormat() const
-    {
-        return m_asbd;
+    double alphaA;
+    double alphaR;
+
+    double yR;
+    double yA;
+} QADRCContext;
+
+static inline double dB_to_scale(double dB)
+{
+    return pow(10, 0.05 * dB);
+}
+
+static inline double scale_to_dB(double scale)
+{
+    return 20 * log10(scale);
+}
+
+/*
+ * gain computer, works on log domain
+ */
+static double computeGain(QADRCContext *s, double x)
+{
+    if (x < s->Tlo)
+	return 0.0;
+    else if (x > s->Thi)
+	return s->slope * (x - s->thresh);
+    else {
+	double delta = x - s->Tlo;
+	return delta * delta * s->knee_factor;
     }
-    size_t readSamples(void *buffer, size_t nsamples);
-private:
-    template <typename T>
-    size_t readSamplesT(T *buffer, size_t nsamples);
+}
 
-    /*
-     * gain computer, works on log domain
-     */
-    double computeGain(double x)
-    {
-        if (x < m_Tlo)
-            return 0.0;
-        else if (x > m_Thi)
-            return m_slope * (x - m_threshold);
-        else {
-            double delta = x - m_Tlo;
-            return delta * delta * m_knee_factor;
-        }
+/*
+ * smooth, level corrected decoupled peak detector
+ * works on log domain
+ */
+static double smoothAverage(QADRCContext *s, double x)
+{
+    const double eps = 1e-120;
+    s->yR = fmin(x, s->alphaR * s->yR + (1.0 - s->alphaR) * x + eps - eps);
+    s->yA = s->alphaA * s->yA + (1.0 - s->alphaA) * s->yR + eps - eps;
+    return s->yA;
+}
+
+static int config_input(AVFilterLink *inlink)
+{
+    AVFilterContext *ctx = inlink->dst;
+    QADRCContext *s = ctx->priv;
+
+    s->slope = (1.0 - s->ratio) / s->ratio;
+    s->attack = s->attack / 1000.0;
+    s->release = s->release / 1000.0;
+    s->Tlo = s->thresh - s->knee / 2.0;
+    s->Thi = s->thresh + s->knee / 2.0;
+    s->knee_factor = s->slope / (s->knee * 2.0);
+    s->yR = 0.0;
+    s->yA = 0.0;
+
+    const double Fs = inlink->sample_rate;
+    s->alphaA = s->attack > 0.0 ? exp(-1.0 / (s->attack * Fs)) : 0.0;
+    s->alphaR = s->release > 0.0 ? exp(-1.0 / (s->release * Fs)) : 0.0;
+
+    return 0;
+}
+
+static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
+{
+    AVFilterContext *ctx = inlink->dst;
+    QADRCContext *s = ctx->priv;
+    AVFilterLink *outlink = ctx->outputs[0];
+
+    void **data = frame->extended_data;
+    const int nsamples = frame->nb_samples;
+    const unsigned nc = inlink->channels;
+
+#define FOR_PLANAR(T)					\
+    for (j = 0, sample = &((T**)data)[j][i];		\
+	 j < nc;					\
+	 j++,   sample = &((T**)data)[j][i] )
+
+#define FOR_NOPLAN(T)					\
+    for (j = 0, sample = &((T**)data)[0][i*nc+j];	\
+	 j < nc;					\
+	 j++,   sample = &((T**)data)[0][i*nc+j] )
+
+#define FILTER_LOOP(T, PLAN)				\
+    for (size_t i = 0; i < nsamples; ++i) {		\
+	int j; T *sample;				\
+	double xL = 0;					\
+	FOR_##PLAN(T) {					\
+		double x = fabs(*sample);		\
+		if (x > xL) xL = x;			\
+	}						\
+	double xG = scale_to_dB(xL);			\
+	double yG = computeGain(s, xG);			\
+	double cG = smoothAverage(s, yG);		\
+	double cL = dB_to_scale(cG);			\
+	FOR_##PLAN(T)					\
+	    *sample *= cL;				\
+    }							\
+
+    switch (outlink->format) {
+    case AV_SAMPLE_FMT_FLT: FILTER_LOOP(float, NOPLAN); break;
+    case AV_SAMPLE_FMT_FLTP: FILTER_LOOP(float, PLANAR); break;
+    case AV_SAMPLE_FMT_DBL: FILTER_LOOP(double, NOPLAN); break;
+    case AV_SAMPLE_FMT_DBLP: FILTER_LOOP(double, PLANAR); break;
     }
-    /*
-     * smooth, level corrected decoupled peak detector
-     * works on log domain
-     */
-    double smoothAverage(double x, double alphaA, double alphaR)
-    {
-        const double eps = 1e-120;
-        m_yR = std::min(x, alphaR * m_yR + (1.0 - alphaR) * x + eps - eps);
-        m_yA = alphaA * m_yA + (1.0 - alphaA) * m_yR + eps - eps;
-        return m_yA;
-    }
+    return ff_filter_frame(outlink, frame);
+}
+
+static int query_formats(AVFilterContext *ctx)
+{
+    AVFilterFormats *formats = NULL;
+    AVFilterChannelLayouts *layouts;
+    int ret;
+
+    layouts = ff_all_channel_layouts();
+
+    if (!layouts)
+	return AVERROR(ENOMEM);
+
+    ff_add_format(&formats, AV_SAMPLE_FMT_FLT);
+    ff_add_format(&formats, AV_SAMPLE_FMT_FLTP);
+    ff_add_format(&formats, AV_SAMPLE_FMT_DBL);
+    ff_add_format(&formats, AV_SAMPLE_FMT_DBLP);
+
+    ret = ff_set_common_formats(ctx, formats);
+    if (ret < 0)
+	return ret;
+    ret = ff_set_common_channel_layouts(ctx, layouts);
+    if (ret < 0)
+	return ret;
+    return ff_set_common_samplerates(ctx, ff_all_samplerates());
+}
+
+#define OFFSET(x) offsetof(QADRCContext, x)
+#define FLAGS AV_OPT_FLAG_AUDIO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
+static const AVOption qadrc_options[] = {
+    { "thresh", "threshold", OFFSET(thresh), AV_OPT_TYPE_DOUBLE, {.dbl = -35}, -70, 0, FLAGS },
+    { "ratio", "compression ratio", OFFSET(ratio), AV_OPT_TYPE_DOUBLE, {.dbl = 1.5}, 1, 100, FLAGS },
+    { "knee", "knee width", OFFSET(knee), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 70, FLAGS },
+    { "attack", "attack time", OFFSET(attack), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 1000, FLAGS },
+    { "release", "release time", OFFSET(release), AV_OPT_TYPE_DOUBLE, {.dbl = 800}, 0, 9000, FLAGS },
+    { NULL }
 };
 
-#endif
+AVFILTER_DEFINE_CLASS(qadrc);
 
-/* compressor.cpp */
-#include "compressor.h"
-#include "cautil.h"
-
-namespace {
-    template <typename T>
-    inline T frame_amplitude(const T *frame, unsigned nchannels)
+static const AVFilterPad inputs[] = {
     {
-        T x = 0;
-        for (unsigned i = 0; i < nchannels; ++i) {
-            T y = std::abs(frame[i]);
-            if (y > x) x = y;
-        }
-        return x;
-    }
-}
+	.name	   = "default",
+	.type	   = AVMEDIA_TYPE_AUDIO,
+	.filter_frame   = filter_frame,
+	.config_props   = config_input,
+	.needs_writable = 1,
+    },
+    { NULL }
+};
 
-Compressor::Compressor(const std::shared_ptr<ISource> &src,
-                       double threshold, double ratio, double knee_width,
-                       double attack, double release)
-    : FilterBase(src),
-      m_threshold(threshold),
-      m_slope((1.0 - ratio) / ratio),
-      m_knee_width(knee_width),
-      m_attack(attack / 1000.0),
-      m_release(release / 1000.0),
-      m_Tlo(threshold - knee_width / 2.0),
-      m_Thi(threshold + knee_width / 2.0),
-      m_knee_factor(m_slope / (knee_width * 2.0)),
-      m_yR(0.0),
-      m_yA(0.0)
-{
-    const AudioStreamBasicDescription &asbd = src->getSampleFormat();
-    unsigned bits = 32;
-    if (asbd.mBitsPerChannel > 32
-        || (asbd.mFormatFlags & kAudioFormatFlagIsSignedInteger) &&
-           asbd.mBitsPerChannel > 24)
-        bits = 64;
-    m_asbd = cautil::buildASBDForPCM(asbd.mSampleRate, asbd.mChannelsPerFrame,
-                                     bits, kAudioFormatFlagIsFloat);
-}
+static const AVFilterPad outputs[] = {
+    {
+	.name = "default",
+	.type = AVMEDIA_TYPE_AUDIO,
+    },
+    { NULL }
+};
 
-size_t Compressor::readSamples(void *buffer, size_t nsamples)
-{
-    if (m_asbd.mBitsPerChannel == 64)
-        return readSamplesT(static_cast<double*>(buffer), nsamples);
-    else
-        return readSamplesT(static_cast<float*>(buffer), nsamples);
-}
-
-template <typename T>
-size_t Compressor::readSamplesT(T *buffer, size_t nsamples)
-{
-    const double Fs = m_asbd.mSampleRate;
-    unsigned nchannels = m_asbd.mChannelsPerFrame;
-    const double alphaA = 
-        m_attack > 0.0 ? std::exp(-1.0 / (m_attack * Fs)) : 0.0;
-    const double alphaR =
-        m_release > 0.0 ? std::exp(-1.0 / (m_release * Fs)) : 0.0;
-
-    nsamples = readSamplesAsFloat(source(), &m_pivot, buffer, nsamples);
-
-    for (size_t i = 0; i < nsamples; ++i) {
-        T *frame = &buffer[i * nchannels];
-        double xL = frame_amplitude(frame, nchannels);
-        double xG = util::scale_to_dB(xL);
-        double yG = computeGain(xG);
-        double cG = smoothAverage(yG, alphaA, alphaR);
-        T cL = static_cast<T>(util::dB_to_scale(cG));
-        for (unsigned n = 0; n < nchannels; ++n)
-            frame[n] *= cL;
-    }
-    return nsamples;
-}
+AVFilter ff_af_qadrc = {
+    .name	  = "qadrc",
+    .description   = NULL_IF_CONFIG_SMALL("qaac dynamic range compressor"),
+    .query_formats = query_formats,
+    .inputs	= inputs,
+    .outputs       = outputs,
+    .priv_size     = sizeof(QADRCContext),
+    .priv_class    = &qadrc_class,
+};
