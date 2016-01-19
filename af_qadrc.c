@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <math.h>
+#include "libavutil/avassert.h"
 #include "libavutil/opt.h"
 #include "libavutil/channel_layout.h"
 #include "avfilter.h"
@@ -26,6 +27,83 @@ typedef struct QADRCContext {
     double yA;
 } QADRCContext;
 
+/* Workaround a lack of optimization in gcc */
+static float exp_cst1 = 2139095040.f;
+static float exp_cst2 = 0.f;
+
+/* Relative error bounded by 1e-5 for normalized outputs
+   Returns invalid outputs for nan inputs
+   Continuous error */
+static inline float expapprox(float val)
+{
+  union { int i; float f; } xu, xu2;
+  float val2, val3, val4, b;
+  int val4i;
+  val2 = 12102203.1615614f*val+1065353216.f;
+  val3 = val2 < exp_cst1 ? val2 : exp_cst1;
+  val4 = val3 > exp_cst2 ? val3 : exp_cst2;
+  val4i = (int) val4;
+  xu.i = val4i & 0x7F800000;
+  xu2.i = (val4i & 0x7FFFFF) | 0x3F800000;
+  b = xu2.f;
+
+  /* Generated in Sollya with:
+     > f=remez(1-x*exp(-(x-1)*log(2)),
+	       [|1,(x-1)*(x-2), (x-1)*(x-2)*x, (x-1)*(x-2)*x*x|],
+	       [1,2], exp(-(x-1)*log(2)));
+     > plot(exp((x-1)*log(2))/(f+x)-1, [1,2]);
+     > f+x;
+  */
+  return
+    xu.f * (0.510397365625862338668154f + b *
+	    (0.310670891004095530771135f + b *
+	     (0.168143436463395944830000f + b *
+	      (-2.88093587581985443087955e-3f + b *
+	       1.3671023382430374383648148e-2f))));
+}
+
+/* Absolute error bounded by 1e-6 for normalized inputs
+   Returns a finite number for +inf input
+   Returns -inf for nan and <= 0 inputs.
+   Continuous error. */
+static inline float logapprox(float val)
+{
+  union { float f; int i; } valu;
+  float exp, addcst, x;
+  valu.f = val;
+  exp = valu.i >> 23;
+  /* 89.970756366f = 127 * log(2) - constant term of polynomial */
+  addcst = val > 0 ? -89.970756366f : -(float)INFINITY;
+  valu.i = (valu.i & 0x7FFFFF) | 0x3F800000;
+  x = valu.f;
+
+  /* Generated in Sollya using :
+    > f = remez(log(x)-(x-1)*log(2),
+	    [|1,(x-1)*(x-2), (x-1)*(x-2)*x, (x-1)*(x-2)*x*x,
+	      (x-1)*(x-2)*x*x*x|], [1,2], 1, 1e-8);
+    > plot(f+(x-1)*log(2)-log(x), [1,2]);
+    > f+(x-1)*log(2)
+  */
+  return
+    x * (3.529304993f + x * (-2.461222105f +
+      x * (1.130626167f + x * (-0.288739945f +
+	x * 3.110401639e-2f))))
+    + (addcst + 0.69314718055995f*exp);
+}
+
+static inline float dB_to_scale(float dB)
+{
+    return expapprox(2.302585093f*0.05f*dB);
+}
+
+static inline float scale_to_dB(float x)
+{
+    if (x < 1e-6f)
+	return -120;
+    return 20.0f*0.4342944819f*logapprox(x);
+}
+
+#if 0
 static inline double dB_to_scale(double dB)
 {
     return pow(10, 0.05 * dB);
@@ -35,6 +113,7 @@ static inline double scale_to_dB(double scale)
 {
     return 20 * log10(scale);
 }
+#endif
 
 /*
  * gain computer, works on log domain
@@ -90,42 +169,141 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     QADRCContext *s = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
 
-    void **data = frame->extended_data;
+    float **data = (float **) frame->extended_data;
     const int nsamples = frame->nb_samples;
     const unsigned nc = inlink->channels;
 
-#define FOR_PLANAR(T)					\
-    for (j = 0, sample = &((T**)data)[j][i];		\
-	 j < nc;					\
-	 j++,   sample = &((T**)data)[j][i] )
+    float a[nsamples];
+    int fmt = outlink->format | (nc <= 2 ? nc << 8 : 0);
 
-#define FOR_NOPLAN(T)					\
-    for (j = 0, sample = &((T**)data)[0][i*nc+j];	\
-	 j < nc;					\
-	 j++,   sample = &((T**)data)[0][i*nc+j] )
-
-#define FILTER_LOOP(T, PLAN)				\
-    for (size_t i = 0; i < nsamples; ++i) {		\
-	int j; T *sample;				\
-	double xL = 0;					\
-	FOR_##PLAN(T) {					\
-		double x = fabs(*sample);		\
-		if (x > xL) xL = x;			\
-	}						\
-	double xG = scale_to_dB(xL);			\
-	double yG = computeGain(s, xG);			\
-	double cG = smoothAverage(s, yG);		\
-	double cL = dB_to_scale(cG);			\
-	FOR_##PLAN(T)					\
-	    *sample *= cL;				\
-    }							\
-
-    switch (outlink->format) {
-    case AV_SAMPLE_FMT_FLT: FILTER_LOOP(float, NOPLAN); break;
-    case AV_SAMPLE_FMT_FLTP: FILTER_LOOP(float, PLANAR); break;
-    case AV_SAMPLE_FMT_DBL: FILTER_LOOP(double, NOPLAN); break;
-    case AV_SAMPLE_FMT_DBLP: FILTER_LOOP(double, PLANAR); break;
+    // calculate peak level
+    switch (fmt) {
+    case AV_SAMPLE_FMT_FLT  | 1 << 8:
+    case AV_SAMPLE_FMT_FLTP | 1 << 8:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float xL = fabsf(data[0][i]);
+	    float xG = scale_to_dB(xL);
+	    a[i] = xG;
+	}
+	break;
+    case AV_SAMPLE_FMT_FLTP | 2 << 8:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float xL = fabsf(data[0][i]);
+	    float xM = fabsf(data[1][i]);
+	    if (xM > xL)
+		xL = xM;
+	    float xG = scale_to_dB(xL);
+	    a[i] = xG;
+	}
+	break;
+    case AV_SAMPLE_FMT_FLTP:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float xL = fabsf(data[0][i]);
+	    for (int j = 1; j < nc; j++) {
+		float xM = fabsf(data[j][i]);
+		if (xM > xL)
+		    xL = xM;
+	    }
+	    a[i] = xL;
+	}
+	break;
+    case AV_SAMPLE_FMT_FLT | 2 << 8:
+	for (size_t j = 0; j < 2 * nsamples; j += 2) {
+	    float xL = fabsf(data[0][j+0]);
+	    float xM = fabsf(data[0][j+1]);
+	    if (xM > xL)
+		xL = xM;
+	    a[j/2] = xL;
+	}
+	break;
+    default:
+	av_assert0(fmt == AV_SAMPLE_FMT_FLT);
+	for (size_t i = 0, j = 0; i < nsamples; i++, j += nc) {
+	    float xL = fabsf(data[0][j]);
+	    for (size_t k = 1; k < nc; k++) {
+		float xM = fabsf(data[0][j+k]);
+		if (xM > xL)
+		    xL = xM;
+	    }
+	    a[i] = xL;
+	}
     }
+
+    switch (fmt) {
+    case AV_SAMPLE_FMT_FLT  | 1 << 8:
+    case AV_SAMPLE_FMT_FLTP | 1 << 8:
+    case AV_SAMPLE_FMT_FLTP | 2 << 8:
+	    break;
+    default:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float xL = a[i];
+	    float xG = scale_to_dB(xL);
+	    a[i] = xG;
+	}
+    }
+
+    // non-vectorizable
+    for (size_t i = 0; i < nsamples; ++i) {
+	double xG = a[i];
+	double yG = computeGain(s, xG);
+	double cG = smoothAverage(s, yG);
+	a[i] = cG;
+    }
+
+    // apply gain
+    switch (fmt) {
+    case AV_SAMPLE_FMT_FLT  | 1 << 8:
+    case AV_SAMPLE_FMT_FLTP | 1 << 8:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float cG = a[i];
+	    float cL = dB_to_scale(cG);
+	    data[0][i] *= cL;
+	}
+	break;
+    case AV_SAMPLE_FMT_FLTP | 2 << 8:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float cG = a[i];
+	    float cL = dB_to_scale(cG);
+	    data[0][i] *= cL;
+	    data[1][i] *= cL;
+	}
+	break;
+    default:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float cG = a[i];
+	    float cL = dB_to_scale(cG);
+	    a[i] = cL;
+	}
+    }
+
+    switch (fmt) {
+    case AV_SAMPLE_FMT_FLT  | 1 << 8:
+    case AV_SAMPLE_FMT_FLTP | 1 << 8:
+    case AV_SAMPLE_FMT_FLTP | 2 << 8:
+	break;
+    case AV_SAMPLE_FMT_FLTP:
+	for (size_t i = 0; i < nsamples; i++) {
+	    float cL = a[i];
+	    for (int j = 0; j < nc; j++)
+	        data[j][i] *= cL;
+	}
+	break;
+    case AV_SAMPLE_FMT_FLT | 2 << 8:
+	for (size_t j = 0; j < 2 * nsamples; j += 2) {
+	    float cL = a[j/2];
+	    data[0][j+0] *= cL;
+	    data[0][j+1] *= cL;
+	}
+	break;
+    default:
+	av_assert0(fmt == AV_SAMPLE_FMT_FLT);
+	for (size_t i = 0, j = 0; i < nsamples; i++, j += nc) {
+	    float cL = a[i];
+	    for (size_t k = 1; k < nc; k++)
+		data[0][j+k] *= cL;
+	}
+    }
+
     return ff_filter_frame(outlink, frame);
 }
 
@@ -142,8 +320,6 @@ static int query_formats(AVFilterContext *ctx)
 
     ff_add_format(&formats, AV_SAMPLE_FMT_FLT);
     ff_add_format(&formats, AV_SAMPLE_FMT_FLTP);
-    ff_add_format(&formats, AV_SAMPLE_FMT_DBL);
-    ff_add_format(&formats, AV_SAMPLE_FMT_DBLP);
 
     ret = ff_set_common_formats(ctx, formats);
     if (ret < 0)
