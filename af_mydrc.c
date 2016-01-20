@@ -53,17 +53,15 @@ typedef struct MyDRCContext {
     int frame_len_msec;
     int filter_size;
 
-    double *prev_amplification_factor;
-    double *dc_correction_value;
-    double *compress_threshold;
+    double prev_amplification_factor;
     double *fade_factors[2];
     double *weights;
 
-    int channels;
-    int delay;
+    cqueue *gain_history;
 
-    cqueue **gain_history_original;
-    cqueue **gain_history_smoothed;
+    bool flush_once;
+    double *flush_buf;
+    int flush_ix;
 
     // gain computer
     double thresh;
@@ -82,8 +80,8 @@ typedef struct MyDRCContext {
     double hi_y[8];
     bool hi_once;
 
-    long cnt[8];
-    double sum[8];
+    int cnt;
+    double sum;
 } MyDRCContext;
 
 #define OFFSET(x) offsetof(MyDRCContext, x)
@@ -117,7 +115,7 @@ static int query_formats(AVFilterContext *ctx)
     AVFilterFormats *formats;
     AVFilterChannelLayouts *layouts;
     static const enum AVSampleFormat sample_fmts[] = {
-        AV_SAMPLE_FMT_DBLP,
+        AV_SAMPLE_FMT_FLTP,
         AV_SAMPLE_FMT_NONE
     };
     int ret;
@@ -219,6 +217,12 @@ static double cqueue_peek(cqueue *q, int index)
     return q->elements[(q->first + index) % q->size];
 }
 
+static double *cqueue_peekp(cqueue *q, int index)
+{
+    av_assert2(index < q->nb_elements);
+    return &q->elements[(q->first + index) % q->size];
+}
+
 static int cqueue_dequeue(cqueue *q, double *element)
 {
     av_assert2(!cqueue_empty(q));
@@ -271,7 +275,6 @@ static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     MyDRCContext *s = ctx->priv;
-    int c;
 
     int hz = 150;
     double RC = 1 / (2 * M_PI * hz);
@@ -285,35 +288,16 @@ static int config_input(AVFilterLink *inlink)
 
     s->fade_factors[0] = av_malloc(s->frame_len * sizeof(*s->fade_factors[0]));
     s->fade_factors[1] = av_malloc(s->frame_len * sizeof(*s->fade_factors[1]));
-
-    s->prev_amplification_factor = av_malloc(inlink->channels * sizeof(*s->prev_amplification_factor));
-    s->dc_correction_value = av_calloc(inlink->channels, sizeof(*s->dc_correction_value));
-    s->compress_threshold = av_calloc(inlink->channels, sizeof(*s->compress_threshold));
-    s->gain_history_original = av_calloc(inlink->channels, sizeof(*s->gain_history_original));
-    s->gain_history_smoothed = av_calloc(inlink->channels, sizeof(*s->gain_history_smoothed));
     s->weights = av_malloc(s->filter_size * sizeof(*s->weights));
-    if (!s->prev_amplification_factor || !s->dc_correction_value ||
-        !s->compress_threshold || !s->fade_factors[0] || !s->fade_factors[1] ||
-        !s->gain_history_original ||
-        !s->gain_history_smoothed || !s->weights)
+    if (!s->fade_factors[0] || !s->fade_factors[1] || !s->weights)
         return AVERROR(ENOMEM);
 
-    for (c = 0; c < inlink->channels; c++) {
-        s->prev_amplification_factor[c] = 1.0;
-
-        s->gain_history_original[c] = cqueue_create(s->filter_size);
-        s->gain_history_smoothed[c] = cqueue_create(s->filter_size);
-
-        if (!s->gain_history_original[c] ||
-            !s->gain_history_smoothed[c])
-            return AVERROR(ENOMEM);
-    }
+    s->gain_history = cqueue_create(s->filter_size);
+    if (!s->gain_history)
+	return AVERROR(ENOMEM);
 
     precalculate_fade_factors(s->fade_factors, s->frame_len);
     init_gaussian_filter(s);
-
-    s->channels = inlink->channels;
-    s->delay = s->filter_size;
 
     return 0;
 }
@@ -336,7 +320,7 @@ static inline double bound(const double threshold, const double val)
     return erf(CONST * (val / threshold)) * threshold;
 }
 
-static double rms_sum(MyDRCContext *s, double *data, int c, int ns)
+static double rms_sum(MyDRCContext *s, float *data, int c, int ns)
 {
     double sum = 0;
     double x0 = s->hi_x[c];
@@ -362,7 +346,7 @@ static double get_frame_rms_dB(MyDRCContext *s, AVFrame *frame)
 
     if (!s->hi_once) {
 	for (int c = 0; c < nc; c++)
-	    s->hi_x[c] = s->hi_y[c] = *(double *) frame->extended_data[c];
+	    s->hi_x[c] = s->hi_y[c] = *(float *) frame->extended_data[c];
 	s->hi_once = true;
     }
 
@@ -386,36 +370,30 @@ static double gaussian_filter(MyDRCContext *s, cqueue *q)
     return result;
 }
 
-static void update_gain_history(MyDRCContext *s, int channel,
-                                double current_gain_factor)
+static void update_gain_history(MyDRCContext *s, double current_gain_factor)
 {
-    if (cqueue_empty(s->gain_history_original[channel])) {
-        const int pre_fill_size = s->filter_size / 2;
-
-        s->prev_amplification_factor[channel] = current_gain_factor;
-
-        while (cqueue_size(s->gain_history_original[channel]) < pre_fill_size) {
-            cqueue_enqueue(s->gain_history_original[channel], current_gain_factor);
-        }
+    int qn = cqueue_size(s->gain_history);
+    if (qn == s->filter_size) {
+	cqueue_pop(s->gain_history);
+	cqueue_enqueue(s->gain_history, current_gain_factor);
+	return;
     }
 
-    cqueue_enqueue(s->gain_history_original[channel], current_gain_factor);
+    av_assert0(qn < s->filter_size);
 
-    while (cqueue_size(s->gain_history_original[channel]) >= s->filter_size) {
-        double smoothed;
-        av_assert0(cqueue_size(s->gain_history_original[channel]) == s->filter_size);
-        smoothed = gaussian_filter(s, s->gain_history_original[channel]);
-
-        cqueue_enqueue(s->gain_history_smoothed[channel], smoothed);
-
-        cqueue_pop(s->gain_history_original[channel]);
+    if (qn == 0) {
+	for (int i = 0; i < s->filter_size / 2 + 1; i++)
+	    cqueue_enqueue(s->gain_history, current_gain_factor);
+	return;
     }
-}
 
-static inline double update_value(double new, double old, double aggressiveness)
-{
-    av_assert0((aggressiveness >= 0.0) && (aggressiveness <= 1.0));
-    return aggressiveness * new + (1.0 - aggressiveness) * old;
+    cqueue_enqueue(s->gain_history, current_gain_factor);
+    if (++qn < s->filter_size)
+	    return;
+
+    for (int i = 0; i < s->filter_size / 2; i++)
+	*cqueue_peekp(s->gain_history, i) =
+		cqueue_peek(s->gain_history, s->filter_size - i - 1);
 }
 
 static inline double dB_to_scale(double dB)
@@ -447,42 +425,38 @@ static double compute_gain(MyDRCContext *s, double x)
 
 static void analyze_frame(MyDRCContext *s, AVFrame *frame)
 {
-	const double vol_dB = get_frame_rms_dB(s, frame);
-	fprintf(stderr, "vol_dB=%f\n", vol_dB);
-	const double gain_dB = compute_gain(s, vol_dB);
-	const double gain = dB_to_scale(gain_dB);
-	//fprintf(stderr, "gain=%f\n", gain);
-        int c;
-
-        for (c = 0; c < s->channels; c++)
-            update_gain_history(s, c, gain);
+    const double vol_dB = get_frame_rms_dB(s, frame);
+    const double gain_dB = compute_gain(s, vol_dB);
+    const double gain = dB_to_scale(gain_dB);
+    update_gain_history(s, gain);
 }
 
 static void amplify_frame(MyDRCContext *s, AVFrame *frame)
 {
-    int c, i;
+    int nc = av_frame_get_channels(frame);
+    double current_amplification_factor = gaussian_filter(s, s->gain_history);
+    if (s->prev_amplification_factor == 0)
+	s->prev_amplification_factor = current_amplification_factor;
 
-    for (c = 0; c < s->channels; c++) {
-        double *dst_ptr = (double *)frame->extended_data[c];
-        double current_amplification_factor;
-
-        cqueue_dequeue(s->gain_history_smoothed[c], &current_amplification_factor);
-
-        for (i = 0; i < frame->nb_samples; i++) {
-            const double amplification_factor = fade(s->prev_amplification_factor[c],
-                                                     current_amplification_factor, i,
-                                                     s->fade_factors);
+    for (int i = 0; i < frame->nb_samples; i++) {
+	double amplification_factor = fade(s->prev_amplification_factor,
+					   current_amplification_factor, i,
+					   s->fade_factors);
+	for (int c = 0; c < nc; c++) {
+            float *dst_ptr = (float *)frame->extended_data[c];
             dst_ptr[i] *= amplification_factor;
-
-	    s->sum[c] += amplification_factor;
-	    if (++s->cnt[c] % 480 == 0) {
-	        fprintf(stderr, "cL%d=%f\n", c, s->sum[c] / 480);
-	        s->sum[c] = 0;
-	    }
         }
+#if 0
+	s->sum += amplification_factor;
+	if (++s->cnt == 480) {
+	    fprintf(stderr, "\ncL=%f\n", s->sum / 480);
+	    s->sum = 0;
+	    s->cnt = 0;
+	}
+#endif
 
-        s->prev_amplification_factor[c] = current_amplification_factor;
     }
+    s->prev_amplification_factor = current_amplification_factor;
 }
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *in)
@@ -492,49 +466,48 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterLink *outlink = inlink->dst->outputs[0];
     int ret = 0;
 
-    if (!cqueue_empty(s->gain_history_smoothed[0])) {
-        AVFrame *out = ff_bufqueue_get(&s->queue);
-
-        amplify_frame(s, out);
-        ret = ff_filter_frame(outlink, out);
-    }
-
     analyze_frame(s, in);
     ff_bufqueue_add(ctx, &s->queue, in);
 
+    if (cqueue_size(s->gain_history) == s->filter_size) {
+        AVFrame *out = ff_bufqueue_get(&s->queue);
+        amplify_frame(s, out);
+        ret = ff_filter_frame(outlink, out);
+    }
     return ret;
 }
 
 static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
                         AVFilterLink *outlink)
 {
-    AVFrame *out = ff_get_audio_buffer(outlink, s->frame_len);
-    int c, i;
-
-    if (!out)
-        return AVERROR(ENOMEM);
-
-    for (c = 0; c < s->channels; c++) {
-        double *dst_ptr = (double *)out->extended_data[c];
-
-        for (i = 0; i < out->nb_samples; i++) {
-            dst_ptr[i] = DBL_EPSILON;
-        }
+    if (!s->flush_once) {
+	s->flush_buf = av_malloc(s->filter_size / 2 * sizeof(double));
+	for (int i = 0; i < s->filter_size / 2; i++)
+	    s->flush_buf[i] = cqueue_peek(s->gain_history, i);
+	s->flush_once = true;
+	s->flush_ix = s->filter_size / 2;
     }
 
-    s->delay--;
-    return filter_frame(inlink, out);
+    if (--s->flush_ix < 0) {
+	AVFrame *out = ff_bufqueue_peek(&s->queue, 0);
+	av_assert0(out == NULL);
+	return AVERROR_EOF;
+    }
+
+    update_gain_history(s, s->flush_buf[s->flush_ix]);
+    AVFrame *out = ff_bufqueue_get(&s->queue);
+    amplify_frame(s, out);
+    return ff_filter_frame(outlink, out);
 }
 
 static int request_frame(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
     MyDRCContext *s = ctx->priv;
-    int ret = 0;
 
-    ret = ff_request_frame(ctx->inputs[0]);
+    int ret = ff_request_frame(ctx->inputs[0]);
 
-    if (ret == AVERROR_EOF && !ctx->is_disabled && s->delay)
+    if (ret == AVERROR_EOF && !ctx->is_disabled)
         ret = flush_buffer(s, ctx->inputs[0], outlink);
 
     return ret;
@@ -543,21 +516,11 @@ static int request_frame(AVFilterLink *outlink)
 static av_cold void uninit(AVFilterContext *ctx)
 {
     MyDRCContext *s = ctx->priv;
-    int c;
 
-    av_freep(&s->prev_amplification_factor);
-    av_freep(&s->dc_correction_value);
-    av_freep(&s->compress_threshold);
     av_freep(&s->fade_factors[0]);
     av_freep(&s->fade_factors[1]);
 
-    for (c = 0; c < s->channels; c++) {
-        cqueue_free(s->gain_history_original[c]);
-        cqueue_free(s->gain_history_smoothed[c]);
-    }
-
-    av_freep(&s->gain_history_original);
-    av_freep(&s->gain_history_smoothed);
+    cqueue_free(s->gain_history);
 
     av_freep(&s->weights);
 
