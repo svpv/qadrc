@@ -82,130 +82,76 @@ Transcode()
 	local codec=${g0codec:?}
 	local format=${g0format:?}
 
-	local qa_can_decode=1
-	if [ $codec = ac3 ]; then
-		qa_can_decode=
-	fi
 	if [ $codec = mp2 ]; then
-		qa_can_decode=
 		ff_decode_pre='-acodec mp2float'
 	fi
 	if [ $codec = mp3 ]; then
 		ff_decode_pre='-acodec mp3float'
 	fi
-	if [ $format = matroska ] || [ $format = flv ]; then
-		qa_can_decode=
-	fi
 
-	local downmix=
+	# -af chain
+	local AF=
+
 	if [ ${g0ch:?} -gt 2 ]; then
-		downmix='ocl=stereo'
-		qa_can_decode=
+		AF=${AF:+$AF,}aresample='ocl=stereo'
 	fi
-
-	local ff_ssto="${ff_ss:+    -ss $ff_ss} ${ff_to:+  -to $ff_to}"
-	local qa_ssto="${ff_ss:+--start $ff_ss} ${ff_to:+--end $ff_to}"
-
-	local arg1="$1" arg2="$2"
 
 	case $mono in
 		no) mono= ;;
 		'') mono=$(perl -e "print 1 if ${g2db1:?} - ${g1db:?} > 20") ;;
 	esac
 
-	mono=${mono:+--matrix-file=$tmpdir/mono.matrix}
-	echo '1 1' >$tmpdir/mono.matrix
-
-	# ff1dec applies ssto, downmix, mono, and possibly gain
-	ff1dec()
-	{
-		local af=${mono:+pan='mono|c0=0.5*c0+0.5*c1'${1:+,}}${1:+volume=${1#*=}dB}
-		af=${downmix:+aresample=$downmix${af:+,}}$af
-		ffmpeg -loglevel error $ff_decode_pre -i "$arg1" $ff_ssto ${af:+-af $af} -acodec pcm_f32le -f wav -
-	}
-
-	local gain=
-
-	qa1enc()
-	{
-		if [ -n "$qa_can_decode" ]; then
-			qaac -o "$arg2" $qa_ssto $mono $gain "$@" "$arg1"
-		else
-			ff1dec |
-			qaac -o "$arg2"                $gain "$@" -
-		fi
-	}
-
-	qa1dec()
-	{
-		if [ -n "$qa_can_decode" ]; then
-			qaac --silent --decode -o - $qa_ssto $mono $gain "$@" "$arg1"
-		elif [ -z "$*" ]; then
-			ff1dec $gain
-		else
-			ff1dec |
-			qaac --silent --decode -o /dev/fd/3        $gain "$@" - 3>&1 1>&2
-		fi
-	}
-
-	ff1enc()
-	{
-		if [ -n "$*" ]; then
-			qa1dec "$@" |
-			lame -V${VBR:-$vbr} /dev/stdin "$arg2"
-			return
-		fi
-		set -- $gain
-		local af=${mono:+pan='mono|c0=0.5*c0+0.5*c1'${1:+,}}${1:+volume=${1#*=}dB}
-		af=${downmix:+aresample=$downmix${af:+,}}$af
-		ffmpeg $ff_decode_pre -i "$arg1" $ff_ssto ${af:+-af $af} -aq ${VBR:-$vbr} -y "$arg2"
-	}
+	if [ -n "$mono" ]; then
+		AF=${AF:+$AF,}pan='mono|c0=0.5*c0+0.5*c1'
+	fi
 
 	local drc=
 	if [ -z "$no_drc" ] && [ "${g1range%.*}" -ge 10 ]; then
 		vars=$(perl -le '
 			use v5.12;
-			my $range = shift;
+			my $range  = shift;
 			my $dbleft = shift;
+			my $rlow   = shift;
 			my $ratio  = 0 + sprintf "%.2f", $range / (9.9 + ($range - 9.9) / 3);
-			my $thresh = 0 + sprintf "%.1f", -15 - $range - $dbleft;
-			my $knee   = 0 + sprintf "%.1f", 2 * ($range + 10);
+			my $thresh = 0 + sprintf "%.0f", (-15 - $range - $dbleft + $rlow) / 2;
+			my $knee   = 0 + sprintf "%.0f", 2 * $range;
 			say "ratio=$ratio thresh=$thresh knee=$knee";
-			' -- $g1range $g1db)
+			' -- $g1range $g1db $g1rlow)
 		local $vars
-		drc="--drc $thresh:$ratio:$knee:20:800"
+		drc="asplit[i1][i2];[i1]qadrc=$thresh:$ratio:$knee:20:800[o1];[i2]mydrc=$(($thresh-2)):$ratio:$knee[o2];[o1][o2]amix"
+		AF=${AF:+$AF,}$drc
 
-		set -o pipefail
-		qa1dec $drc |
-		ffmpeg	-i - -vn -af replaygain,ebur128=framelog=verbose \
+		ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
+			-af "$AF",replaygain,ebur128=framelog=verbose \
 			-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
-		set +o pipefail
 
 		vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
 		local $vars
 	fi
 
-	rm $tmpdir/gain$$.log
-
-	gain=${g1db:?}
+	if [ ${g1db:?} != 0 ]; then
+		AF=${AF:+$AF,}volume=${g1db}dB
+	fi
 
 	local limiter
-	limiter=$(perl -le "print 1 if ${g1peak:?} + $gain > -0.071")
-	limiter=${limiter:+--limiter}
+	limiter=$(perl -le "print 1 if ${g1peak:?} + $g1db > -0.071")
+	if [ -n "$limiter" ]; then
+		AF=${AF:+$AF,}qalimiter
+	fi
 
-	[ "$gain" != 0 ] || gain=
-	gain=${gain:+--gain=$gain}
-
-	set -o pipefail
-	if [[ $2 != *.[Mm][Pp]3 ]]; then
+	if [[ $2 = *.[Mm][Pp]3 ]]; then
+		ffmpeg $ff_decode_pre -i "$1" ${ff_ss:+-ss $ff_ss} ${ff_t:+-t $ff_t} -vn \
+			${AF:+-af "$AF"} -aq ${VBR:-$vbr} -y "$2"
+	else
 		adts=
 		[[ $2 != *.[Aa][Aa][Cc] ]] || adts='--adts'
 		priming=${priming:+--num-priming=$priming}
-		qa1enc $drc $limiter $priming $adts --tvbr=${TVBR:-$tvbr}
-	else
-		ff1enc $drc $limiter
+		set -o pipefail
+		ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
+			${AF:+-af "$AF"} -acodec pcm_f32le -f wav - |
+		qaac -o "$2" $priming $adts --tvbr=${TVBR:-$tvbr} -
+		set +o pipefail
 	fi
-	set +o pipefail
 }
 
 argv=$(getopt -n "${0##*/}" -o t:V: -al mono,stereo,no-drc,priming:,ss:,to:,tvbr: -- "$@")

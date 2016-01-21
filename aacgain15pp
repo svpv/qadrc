@@ -68,6 +68,13 @@ if (/^ +LRA: +(\S+)/) {
 	say "g${n}range=$range[-1]";
 }
 
+our @rlow;
+if (/^ +LRA low: +(\S+)/) {
+	push @rlow, 0 + $1;
+	my $n = @rlow;
+	say "g${n}rlow=$rlow[-1]";
+}
+
 use POSIX qw(floor);
 
 END {
