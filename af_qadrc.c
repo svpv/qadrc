@@ -14,17 +14,25 @@ typedef struct QADRCContext {
     double knee;
     double attack;
     double release;
+    double delay;
 
     double slope;
     double Tlo;
     double Thi;
     double knee_factor;
+    size_t delay_samples;
+    size_t total_samples;
 
     double alphaA;
     double alphaR;
 
     double yR;
     double yA;
+
+    AVFrame **frames;
+    size_t nframes;
+    size_t fpos;
+    float lasta;
 } QADRCContext;
 
 /* Workaround a lack of optimization in gcc */
@@ -157,25 +165,19 @@ static int config_input(AVFilterLink *inlink)
     s->yA = 0.0;
 
     const double Fs = inlink->sample_rate;
+    s->delay_samples = s->delay * Fs / 1000;
+    av_log(ctx, AV_LOG_DEBUG, "delay samples = %zu\n", s->delay_samples);
+
     s->alphaA = s->attack > 0.0 ? exp(-1.0 / (s->attack * Fs)) : 0.0;
     s->alphaR = s->release > 0.0 ? exp(-1.0 / (s->release * Fs)) : 0.0;
 
     return 0;
 }
 
-static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
+static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a)
 {
-    AVFilterContext *ctx = inlink->dst;
-    QADRCContext *s = ctx->priv;
-    AVFilterLink *outlink = ctx->outputs[0];
-
     float **data = (float **) frame->extended_data;
     const int nsamples = frame->nb_samples;
-    const unsigned nc = inlink->channels;
-
-    float a[nsamples];
-    int fmt = outlink->format | (nc <= 2 ? nc << 8 : 0);
-
     // calculate peak level
     switch (fmt) {
     case AV_SAMPLE_FMT_FLT  | 1 << 8:
@@ -233,7 +235,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     case AV_SAMPLE_FMT_FLT  | 1 << 8:
     case AV_SAMPLE_FMT_FLTP | 1 << 8:
     case AV_SAMPLE_FMT_FLTP | 2 << 8:
-	    break;
+	break;
     default:
 	for (size_t i = 0; i < nsamples; i++) {
 	    float xL = a[i];
@@ -249,27 +251,29 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
 	double cG = smoothAverage(s, yG);
 	a[i] = cG;
     }
+}
 
-    // apply gain
+static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, size_t n)
+{
     switch (fmt) {
     case AV_SAMPLE_FMT_FLT  | 1 << 8:
     case AV_SAMPLE_FMT_FLTP | 1 << 8:
-	for (size_t i = 0; i < nsamples; i++) {
+	for (size_t i = 0; i < n; i++) {
 	    float cG = a[i];
 	    float cL = dB_to_scale(cG);
-	    data[0][i] *= cL;
+	    data[0][off+i] *= cL;
 	}
 	break;
     case AV_SAMPLE_FMT_FLTP | 2 << 8:
-	for (size_t i = 0; i < nsamples; i++) {
+	for (size_t i = 0; i < n; i++) {
 	    float cG = a[i];
 	    float cL = dB_to_scale(cG);
-	    data[0][i] *= cL;
-	    data[1][i] *= cL;
+	    data[0][off+i] *= cL;
+	    data[1][off+i] *= cL;
 	}
 	break;
     default:
-	for (size_t i = 0; i < nsamples; i++) {
+	for (size_t i = 0; i < n; i++) {
 	    float cG = a[i];
 	    float cL = dB_to_scale(cG);
 	    a[i] = cL;
@@ -282,29 +286,121 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     case AV_SAMPLE_FMT_FLTP | 2 << 8:
 	break;
     case AV_SAMPLE_FMT_FLTP:
-	for (size_t i = 0; i < nsamples; i++) {
+	for (size_t i = 0; i < n; i++) {
 	    float cL = a[i];
 	    for (int j = 0; j < nc; j++)
-	        data[j][i] *= cL;
+	        data[j][off+i] *= cL;
 	}
 	break;
     case AV_SAMPLE_FMT_FLT | 2 << 8:
-	for (size_t j = 0; j < 2 * nsamples; j += 2) {
+	off *= 2;
+	for (size_t j = 0; j < 2 * n; j += 2) {
 	    float cL = a[j/2];
-	    data[0][j+0] *= cL;
-	    data[0][j+1] *= cL;
+	    data[0][off+j+0] *= cL;
+	    data[0][off+j+1] *= cL;
 	}
 	break;
     default:
 	av_assert0(fmt == AV_SAMPLE_FMT_FLT);
-	for (size_t i = 0, j = 0; i < nsamples; i++, j += nc) {
+	off *= nc;
+	for (size_t i = 0, j = 0; i < n; i++, j += nc) {
 	    float cL = a[i];
 	    for (size_t k = 1; k < nc; k++)
-		data[0][j+k] *= cL;
+		data[0][off+j+k] *= cL;
 	}
     }
+}
 
-    return ff_filter_frame(outlink, frame);
+static int apply(QADRCContext *s, AVFilterLink *outlink,
+	int fmt, unsigned nc, float *a, size_t nsamples)
+{
+    if (s->total_samples >= s->delay_samples)
+	s->total_samples += nsamples;
+    else {
+	size_t off = s->delay_samples - s->total_samples;
+	s->total_samples += nsamples;
+	if (s->total_samples <= s->delay_samples)
+	    return 0;
+	av_assert0(off < nsamples);
+	a += off;
+	nsamples -= off;
+    }
+
+    int ret = 0;
+    while (1) {
+	AVFrame *f0 = s->frames[0];
+	size_t f0samples = f0->nb_samples - s->fpos;
+	size_t apply_samples = FFMIN(nsamples, f0samples);
+	float **data0 = (float **) f0->extended_data;
+	apply1(data0, s->fpos, fmt, nc, a, apply_samples);
+	if (f0samples > nsamples) {
+	    s->fpos += nsamples;
+	    break;
+        }
+	else {
+	    ret |= ff_filter_frame(outlink, f0);
+	    s->nframes--;
+	    memmove(s->frames, s->frames + 1, s->nframes * sizeof(AVFrame *));
+	    s->fpos = 0;
+	    nsamples -= apply_samples;
+	    if (nsamples == 0)
+		break;
+	    av_assert0(s->nframes > 0);
+	    a += apply_samples;
+        }
+    }
+
+    return ret;
+}
+
+static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
+{
+    AVFilterContext *ctx = inlink->dst;
+    QADRCContext *s = ctx->priv;
+    AVFilterLink *outlink = ctx->outputs[0];
+
+    int nsamples = frame->nb_samples;
+    unsigned nc = inlink->channels;
+
+    float a[nsamples];
+    int fmt = outlink->format | (nc <= 2 ? nc << 8 : 0);
+
+    chew(s, frame, fmt, nc, a);
+    s->lasta = a[nsamples - 1];
+
+    s->frames = av_realloc_f(s->frames, s->nframes + 1, sizeof(AVFrame *));
+    s->frames[s->nframes++] = frame;
+
+    return apply(s, outlink, fmt, nc, a, nsamples);
+}
+
+static int final_flush(AVFilterLink *inlink, AVFilterContext *ctx, QADRCContext *s)
+{
+    AVFilterLink *outlink = ctx->outputs[0];
+
+    AVFrame *f0 = s->frames[0];
+    size_t nsamples = f0->nb_samples - s->fpos;
+    unsigned nc = inlink->channels;
+
+    float a[nsamples];
+    int fmt = outlink->format | (nc <= 2 ? nc << 8 : 0);
+
+    for (size_t i = 0; i < nsamples; i++)
+	a[i] = s->lasta;
+
+    return apply(s, outlink, fmt, nc, a, nsamples);
+}
+
+static int request_frame(AVFilterLink *outlink)
+{
+    AVFilterContext *ctx = outlink->src;
+    QADRCContext *s = ctx->priv;
+
+    int ret = ff_request_frame(ctx->inputs[0]);
+    if (ret == AVERROR_EOF && !ctx->is_disabled && s->nframes)
+	ret = final_flush(outlink, ctx, s);
+
+    return ret;
 }
 
 static int query_formats(AVFilterContext *ctx)
@@ -338,6 +434,7 @@ static const AVOption qadrc_options[] = {
     { "knee", "knee width", OFFSET(knee), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 70, FLAGS },
     { "attack", "attack time", OFFSET(attack), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 1000, FLAGS },
     { "release", "release time", OFFSET(release), AV_OPT_TYPE_DOUBLE, {.dbl = 800}, 0, 9000, FLAGS },
+    { "delay", "delay (lookahead) time", OFFSET(delay), AV_OPT_TYPE_DOUBLE, {.dbl = 10}, 0, 1000, FLAGS },
     { NULL }
 };
 
@@ -358,6 +455,7 @@ static const AVFilterPad outputs[] = {
     {
 	.name = "default",
 	.type = AVMEDIA_TYPE_AUDIO,
+	.request_frame = request_frame,
     },
     { NULL }
 };
