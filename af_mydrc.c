@@ -427,14 +427,14 @@ static void analyze_frame(MyDRCContext *s, AVFrame *frame)
 {
     const double vol_dB = get_frame_rms_dB(s, frame);
     const double gain_dB = compute_gain(s, vol_dB);
-    const double gain = dB_to_scale(gain_dB);
-    update_gain_history(s, gain);
+    update_gain_history(s, gain_dB);
 }
 
 static void amplify_frame(MyDRCContext *s, AVFrame *frame)
 {
     int nc = av_frame_get_channels(frame);
-    double current_amplification_factor = gaussian_filter(s, s->gain_history);
+    double current_amplification_factor =
+	    dB_to_scale(gaussian_filter(s, s->gain_history));
     if (s->prev_amplification_factor == 0)
 	s->prev_amplification_factor = current_amplification_factor;
 
