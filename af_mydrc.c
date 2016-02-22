@@ -51,13 +51,15 @@ typedef struct MyDRCContext {
 
     int frame_len;
     int frame_len_msec;
+    int min_size;
     int filter_size;
 
     double prev_amplification_factor;
     double *fade_factors[2];
     double *weights;
 
-    cqueue *gain_history;
+    cqueue *gain_min;
+    cqueue *gain_filter;
 
     bool flush_once;
     double *flush_buf;
@@ -92,7 +94,8 @@ static const AVOption mydrc_options[] = {
     { "ratio", "compression ratio", OFFSET(ratio), AV_OPT_TYPE_DOUBLE, {.dbl = 1.5}, 1, 100, FLAGS },
     { "knee", "knee width", OFFSET(knee), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 70, FLAGS },
     { "f", "set the frame length in msec",     OFFSET(frame_len_msec),    AV_OPT_TYPE_INT,    {.i64 = 500},   10,  8000, FLAGS },
-    { "g", "set the filter size",              OFFSET(filter_size),       AV_OPT_TYPE_INT,    {.i64 = 31},     3,   301, FLAGS },
+    { "g", "set the gaussian filter size",     OFFSET(filter_size),       AV_OPT_TYPE_INT,    {.i64 = 31},     3,   301, FLAGS },
+    { "min", "set the min filter size",        OFFSET(min_size),          AV_OPT_TYPE_INT,    {.i64 =  3},     3,   301, FLAGS },
     { NULL }
 };
 
@@ -104,6 +107,11 @@ static av_cold int init(AVFilterContext *ctx)
 
     if (!(s->filter_size & 1)) {
         av_log(ctx, AV_LOG_ERROR, "filter size %d is invalid. Must be an odd value.\n", s->filter_size);
+        return AVERROR(EINVAL);
+    }
+
+    if (!(s->min_size & 1)) {
+        av_log(ctx, AV_LOG_ERROR, "min size %d is invalid. Must be an odd value.\n", s->min_size);
         return AVERROR(EINVAL);
     }
 
@@ -292,8 +300,12 @@ static int config_input(AVFilterLink *inlink)
     if (!s->fade_factors[0] || !s->fade_factors[1] || !s->weights)
         return AVERROR(ENOMEM);
 
-    s->gain_history = cqueue_create(s->filter_size);
-    if (!s->gain_history)
+    s->gain_min = cqueue_create(s->min_size);
+    if (!s->gain_min)
+	return AVERROR(ENOMEM);
+
+    s->gain_filter = cqueue_create(s->filter_size);
+    if (!s->gain_filter)
 	return AVERROR(ENOMEM);
 
     precalculate_fade_factors(s->fade_factors, s->frame_len);
@@ -358,6 +370,18 @@ static double get_frame_rms_dB(MyDRCContext *s, AVFrame *frame)
     return 10 * log10(mean);
 }
 
+static double minimum_filter(cqueue *q)
+{
+    double min = DBL_MAX;
+    int i;
+
+    for (i = 0; i < cqueue_size(q); i++) {
+        min = FFMIN(min, cqueue_peek(q, i));
+    }
+
+    return min;
+}
+
 static double gaussian_filter(MyDRCContext *s, cqueue *q)
 {
     double result = 0.0;
@@ -370,30 +394,42 @@ static double gaussian_filter(MyDRCContext *s, cqueue *q)
     return result;
 }
 
-static void update_gain_history(MyDRCContext *s, double current_gain_factor)
+static bool update_cqueue(cqueue *q, double val)
 {
-    int qn = cqueue_size(s->gain_history);
-    if (qn == s->filter_size) {
-	cqueue_pop(s->gain_history);
-	cqueue_enqueue(s->gain_history, current_gain_factor);
-	return;
+    int qn = cqueue_size(q);
+    int filter_size = q->size;
+    if (qn == filter_size) {
+	cqueue_pop(q);
+	cqueue_enqueue(q, val);
+	return true;
     }
 
-    av_assert0(qn < s->filter_size);
+    av_assert0(qn < filter_size);
 
     if (qn == 0) {
-	for (int i = 0; i < s->filter_size / 2 + 1; i++)
-	    cqueue_enqueue(s->gain_history, current_gain_factor);
-	return;
+	for (int i = 0; i < filter_size / 2 + 1; i++)
+	    cqueue_enqueue(q, val);
+	return false;
     }
 
-    cqueue_enqueue(s->gain_history, current_gain_factor);
-    if (++qn < s->filter_size)
-	    return;
+    cqueue_enqueue(q, val);
+    if (++qn < filter_size)
+	return false;
 
-    for (int i = 0; i < s->filter_size / 2; i++)
-	*cqueue_peekp(s->gain_history, i) =
-		cqueue_peek(s->gain_history, s->filter_size - i - 1);
+    // mirror
+    for (int i = 0; i < filter_size / 2; i++)
+	*cqueue_peekp(q, i) = cqueue_peek(q, filter_size - i - 1);
+    return true;
+}
+
+static bool update_gain_history(MyDRCContext *s, double current_gain_dB)
+{
+    bool ret = update_cqueue(s->gain_min, current_gain_dB);
+    if (ret) {
+	double min = minimum_filter(s->gain_min);
+	ret = update_cqueue(s->gain_filter, min);
+    }
+    return ret;
 }
 
 static inline double dB_to_scale(double dB)
@@ -423,18 +459,18 @@ static double compute_gain(MyDRCContext *s, double x)
     }
 }
 
-static void analyze_frame(MyDRCContext *s, AVFrame *frame)
+static bool analyze_frame(MyDRCContext *s, AVFrame *frame)
 {
     const double vol_dB = get_frame_rms_dB(s, frame);
     const double gain_dB = compute_gain(s, vol_dB);
-    update_gain_history(s, gain_dB);
+    return update_gain_history(s, gain_dB);
 }
 
 static void amplify_frame(MyDRCContext *s, AVFrame *frame)
 {
     int nc = av_frame_get_channels(frame);
     double current_amplification_factor =
-	    dB_to_scale(gaussian_filter(s, s->gain_history));
+	    dB_to_scale(gaussian_filter(s, s->gain_filter));
     if (s->prev_amplification_factor == 0)
 	s->prev_amplification_factor = current_amplification_factor;
 
@@ -466,10 +502,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterLink *outlink = inlink->dst->outputs[0];
     int ret = 0;
 
-    analyze_frame(s, in);
+    bool ready = analyze_frame(s, in);
     ff_bufqueue_add(ctx, &s->queue, in);
 
-    if (cqueue_size(s->gain_history) == s->filter_size) {
+    if (ready) {
         AVFrame *out = ff_bufqueue_get(&s->queue);
         amplify_frame(s, out);
         ret = ff_filter_frame(outlink, out);
@@ -483,7 +519,7 @@ static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
     if (!s->flush_once) {
 	s->flush_buf = av_malloc(s->filter_size / 2 * sizeof(double));
 	for (int i = 0; i < s->filter_size / 2; i++)
-	    s->flush_buf[i] = cqueue_peek(s->gain_history, i);
+	    s->flush_buf[i] = cqueue_peek(s->gain_filter, i);
 	s->flush_once = true;
 	s->flush_ix = s->filter_size / 2;
     }
@@ -520,7 +556,8 @@ static av_cold void uninit(AVFilterContext *ctx)
     av_freep(&s->fade_factors[0]);
     av_freep(&s->fade_factors[1]);
 
-    cqueue_free(s->gain_history);
+    cqueue_free(s->gain_min);
+    cqueue_free(s->gain_filter);
 
     av_freep(&s->weights);
 
