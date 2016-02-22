@@ -161,8 +161,8 @@ static int config_input(AVFilterLink *inlink)
     s->Tlo = s->thresh - s->knee / 2.0;
     s->Thi = s->thresh + s->knee / 2.0;
     s->knee_factor = s->slope / (s->knee * 2.0);
-    s->yR = 0.0;
-    s->yA = 0.0;
+    s->yR = -10;
+    s->yA = -10;
 
     const double Fs = inlink->sample_rate;
     s->delay_samples = s->delay * Fs / 1000;
