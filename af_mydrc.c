@@ -517,11 +517,15 @@ static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
                         AVFilterLink *outlink)
 {
     if (!s->flush_once) {
-	s->flush_buf = av_malloc(s->filter_size / 2 * sizeof(double));
-	for (int i = 0; i < s->filter_size / 2; i++)
-	    s->flush_buf[i] = cqueue_peek(s->gain_filter, i);
+	int flush_size = s->min_size / 2 + s->filter_size / 2;
+	s->flush_buf = av_malloc(flush_size * sizeof(double));
+	// copy last filter elements, to be applied backwards
+	int off = cqueue_size(s->gain_filter) - flush_size - 1;
+	av_assert0(off >= 0);
+	for (int i = 0; i < flush_size; i++)
+	    s->flush_buf[i] = cqueue_peek(s->gain_filter, i + off);
 	s->flush_once = true;
-	s->flush_ix = s->filter_size / 2;
+	s->flush_ix = flush_size;
     }
 
     if (--s->flush_ix < 0) {
