@@ -426,6 +426,12 @@ static int query_formats(AVFilterContext *ctx)
     return ff_set_common_samplerates(ctx, ff_all_samplerates());
 }
 
+static int config_output(AVFilterLink *outlink)
+{
+    outlink->flags |= FF_LINK_FLAG_REQUEST_LOOP;
+    return 0;
+}
+
 #define OFFSET(x) offsetof(QADRCContext, x)
 #define FLAGS AV_OPT_FLAG_AUDIO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
 static const AVOption qadrc_options[] = {
@@ -455,6 +461,7 @@ static const AVFilterPad outputs[] = {
     {
 	.name = "default",
 	.type = AVMEDIA_TYPE_AUDIO,
+	.config_props  = config_output,
 	.request_frame = request_frame,
     },
     { NULL }
