@@ -1,4 +1,9 @@
 #!/bin/bash -efu
+#
+# aacgain15 - normalize audio volume to the average of ReplayGain 1.0 and 2.0
+#
+# Written by Alexey Tourbin.
+# This file is distributed as Public Domain.
 
 av0=$(readlink -ev "$0")
 av0dir=$(dirname "$av0")

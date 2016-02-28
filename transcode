@@ -1,4 +1,9 @@
 #!/bin/bash -efux
+#
+# transcode - transcode radio programs for portable use
+#
+# Written by Alexey Tourbin.
+# This file is distributed as Public Domain.
 
 tmpdir=${TMPDIR:-/tmp}
 

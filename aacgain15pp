@@ -1,4 +1,10 @@
 #!/usr/bin/perl -n
+#
+# aacgain15pp - post-process ffmpeg output
+#
+# Written by Alexey Tourbin.
+# This file is distributed as Public Domain.
+
 use v5.12;
 
 our $B;
