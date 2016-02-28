@@ -27,20 +27,17 @@ SOFTWARE.
 #ifndef SIMD_MATH_PRIMS_H
 #define SIMD_MATH_PRIMS_H
 
-#include<math.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <math.h>
 
 /* Workaround a lack of optimization in gcc */
-float exp_cst1 = 2139095040.f;
-float exp_cst2 = 0.f;
+static float exp_cst1 = 2139095040.f;
+static float exp_cst2 = 0.f;
 
 /* Relative error bounded by 1e-5 for normalized outputs
    Returns invalid outputs for nan inputs
    Continuous error */
-inline float expapprox(float val) {
+static inline float expapprox(float val)
+{
   union { int i; float f; } xu, xu2;
   float val2, val3, val4, b;
   int val4i;
@@ -71,7 +68,8 @@ inline float expapprox(float val) {
    Returns a finite number for +inf input
    Returns -inf for nan and <= 0 inputs.
    Continuous error. */
-inline float logapprox(float val) {
+static inline float logapprox(float val)
+{
   union { float f; int i; } valu;
   float exp, addcst, x;
   valu.f = val;
@@ -81,14 +79,13 @@ inline float logapprox(float val) {
   valu.i = (valu.i & 0x7FFFFF) | 0x3F800000;
   x = valu.f;
 
-
   /* Generated in Sollya using :
     > f = remez(log(x)-(x-1)*log(2),
             [|1,(x-1)*(x-2), (x-1)*(x-2)*x, (x-1)*(x-2)*x*x,
               (x-1)*(x-2)*x*x*x|], [1,2], 1, 1e-8);
     > plot(f+(x-1)*log(2)-log(x), [1,2]);
     > f+(x-1)*log(2)
- */
+  */
   return
     x * (3.529304993f + x * (-2.461222105f +
       x * (1.130626167f + x * (-0.288739945f +
@@ -96,10 +93,12 @@ inline float logapprox(float val) {
     + (addcst + 0.69314718055995f*exp);
 }
 
+#if 0
 /* Correct only in [-pi, pi]
    Absolute error bounded by 5e-5
    Continuous error */
-inline float cosapprox(float val) {
+static inline float cosapprox(float val)
+{
   float val2 = val*val;
   return
     0.999959766864776611328125f + val2 *
@@ -112,7 +111,8 @@ inline float cosapprox(float val) {
 /* Correct only in [-pi, pi]
    Absolute error bounded by 6e-6
    Continuous error */
-inline float sinapprox(float val) {
+static inline float sinapprox(float val)
+{
   float val2 = val*val;
   return
     val * (0.99997937679290771484375f + val2 *
@@ -120,9 +120,6 @@ inline float sinapprox(float val) {
             (8.30897875130176544189453125e-3f + val2 *
              (-1.92649182281456887722015380859375e-4f + val2 *
               2.147840177713078446686267852783203125e-6f))));
-}
-
-#ifdef __cplusplus
 }
 #endif
 
