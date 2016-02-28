@@ -1,3 +1,19 @@
+/*
+ * qalimiter - stray spike limiter for ffmpeg
+ *
+ * Written by Alexey Tourbin.
+ * Based on qaac limiter by nu774.
+ * This file is distributed as Public Domain.
+ *
+ * Description by nu774:
+ * When limiter is on, qaac will apply smart limiter that only affects
+ * portions surrounding peaks beyond (near) 0dBFS. It will search peaks,
+ * then applies non-linear filter to half cycle (zero-crossing point
+ * to next zero-crossing point) surrounding each peak. The result falls
+ * within 0dBFS range and still is smoothly connected to other parts,
+ * and has much less audible distortions than simple dumb hard clip.
+ */
+
 #include <stddef.h>
 #include <math.h>
 #include "libavutil/channel_layout.h"

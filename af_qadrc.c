@@ -1,3 +1,14 @@
+/*
+ * qadrc - classic dynamic range compressor for ffmpeg
+ *
+ * Written by Alexey Tourbin.
+ * Based on qaac compressor by nu774.
+ * This file is distributed as Public Domain.
+ *
+ * This implementation is based on "Digital Dynamic Range Compressor Design -
+ * A Tutorial and Analysis", JAES2012.  It adds the delay (lookahead) parameter.
+ */
+
 #include <stdlib.h>
 #include <math.h>
 #include "libavutil/avassert.h"
