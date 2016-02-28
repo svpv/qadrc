@@ -1,27 +1,13 @@
 /*
- * Dynamic Audio Normalizer
- * Copyright (c) 2015 LoRd_MuldeR <mulder2@gmx.de>. Some rights reserved.
+ * mydrc - smooth compressor / dynamic normalizer
  *
- * This file is part of FFmpeg.
+ * Written by Alexey Tourbin.
+ * Based on Dynamic Audio Normalizer by LoRd_MuldeR.
  *
- * FFmpeg is free software; you can redistribute it and/or
+ * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
- *
- * FFmpeg is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with FFmpeg; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
-
-/**
- * @file
- * Dynamic Audio Normalizer
  */
 
 #include <float.h>
@@ -591,7 +577,7 @@ static const AVFilterPad avfilter_af_mydrc_outputs[] = {
 
 AVFilter ff_af_mydrc = {
     .name          = "mydrc",
-    .description   = NULL_IF_CONFIG_SMALL("Dynamic Audio Normalizer."),
+    .description   = NULL_IF_CONFIG_SMALL("smooth dynamic compressor"),
     .query_formats = query_formats,
     .priv_size     = sizeof(MyDRCContext),
     .init          = init,
