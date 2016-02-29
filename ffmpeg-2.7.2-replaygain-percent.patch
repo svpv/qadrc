@@ -1,0 +1,80 @@
+--- ffmpeg-2.7.2/libavfilter/af_replaygain.c-	2015-06-18 21:55:02.000000000 +0300
++++ ffmpeg-2.7.2/libavfilter/af_replaygain.c	2015-09-07 01:14:38.108045674 +0300
+@@ -23,6 +23,7 @@
+  * ReplayGain scanner
+  */
+ 
++#include "libavutil/opt.h"
+ #include "libavutil/avassert.h"
+ #include "libavutil/channel_layout.h"
+ #include "audio.h"
+@@ -306,6 +307,7 @@ static const ReplayGainFreqInfo freqinfo
+ };
+ 
+ typedef struct ReplayGainContext {
++    const AVClass *class;
+     uint32_t histogram[HISTOGRAM_SLOTS];
+     float peak;
+     int yule_hist_i, butter_hist_i;
+@@ -317,6 +319,7 @@ typedef struct ReplayGainContext {
+     float yule_hist_b[256];
+     float butter_hist_a[256];
+     float butter_hist_b[256];
++    double percent;
+ } ReplayGainContext;
+ 
+ static int query_formats(AVFilterContext *ctx)
+@@ -526,17 +529,20 @@ static void yule_filter_stereo_samples(R
+  * Calculate the ReplayGain value from the specified loudness histogram;
+  * clip to -24 / +64 dB.
+  */
+-static float calc_replaygain(uint32_t *histogram)
++static float calc_replaygain(uint32_t *histogram, double percent)
+ {
+     uint32_t loud_count = 0, total_windows = 0;
++    uint32_t thresh;
+     float gain;
+     int i;
+ 
+     for (i = 0; i < HISTOGRAM_SLOTS; i++)
+         total_windows += histogram [i];
+ 
++    thresh = total_windows * (100.0 - percent) / 100.0;
++
+     while (i--)
+-        if ((loud_count += histogram [i]) * 20 >= total_windows)
++        if ((loud_count += histogram [i]) >= thresh)
+             break;
+ 
+     gain = (float)(64.54 - i / 100.0);
+@@ -578,7 +584,7 @@ static int filter_frame(AVFilterLink *in
+ static av_cold void uninit(AVFilterContext *ctx)
+ {
+     ReplayGainContext *s = ctx->priv;
+-    float gain = calc_replaygain(s->histogram);
++    float gain = calc_replaygain(s->histogram, s->percent);
+ 
+     av_log(ctx, AV_LOG_INFO, "track_gain = %+.2f dB\n", gain);
+     av_log(ctx, AV_LOG_INFO, "track_peak = %.6f\n", s->peak);
+@@ -602,6 +608,15 @@ static const AVFilterPad replaygain_outp
+     { NULL }
+ };
+ 
++#define OFFSET(x) offsetof(ReplayGainContext, x)
++#define FLAGS AV_OPT_FLAG_AUDIO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
++static const AVOption replaygain_options[] = {
++    { "percent", "set loudness percentile", OFFSET(percent), AV_OPT_TYPE_DOUBLE, {.dbl = 95}, 50, 100, FLAGS },
++    { NULL },
++};
++
++AVFILTER_DEFINE_CLASS(replaygain);
++
+ AVFilter ff_af_replaygain = {
+     .name          = "replaygain",
+     .description   = NULL_IF_CONFIG_SMALL("ReplayGain scanner."),
+@@ -610,4 +625,5 @@ AVFilter ff_af_replaygain = {
+     .priv_size     = sizeof(ReplayGainContext),
+     .inputs        = replaygain_inputs,
+     .outputs       = replaygain_outputs,
++    .priv_class    = &replaygain_class,
+ };
