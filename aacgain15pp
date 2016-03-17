@@ -13,7 +13,7 @@ if (/^Input #/../^Output #/ and /^\s*Duration: .*(, bitrate.+)/) {
 }
 
 our %A;
-if (/^Input #/../^Output #/ and s/^\s*Stream #(\d[:.]\d)(?:\([^)]+\))?: Audio: //) {
+if (/^Input #/../^Output #/ and s/^\s*Stream #(\d[:.]\d)\b[^:]*: Audio: //) {
 	$A{$1} = $_ . $B;
 	undef $B;
 }
