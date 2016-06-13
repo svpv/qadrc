@@ -1,0 +1,62 @@
+#!/bin/bash -efu
+#
+# ismono - detect if the input signal is mono
+#
+# Written by Alexey Tourbin.
+# This file is distributed as Public Domain.
+
+av0=$(readlink -ev "$0")
+av0dir=$(dirname "$av0")
+
+tmpdir=${TMPDIR:-/tmp}
+
+# seek and duration support
+. $av0dir/ffseek.sh
+
+# predefined album gain
+gain=
+
+IsMono()
+{
+	ffseek
+
+	local ff_decode_pre=
+	if [[ $1 = *.[Mm][Pp]3 ]]; then
+		ff_decode_pre='-acodec mp3float'
+	fi
+
+	ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
+		-af replaygain,ebur128=framelog=verbose,pan='mono|c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
+		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
+
+	local vars
+	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
+	local $vars
+
+	local q99 mono=
+	q99=$(perl -e "print ${g2db1:?} - ${gain:-${g1db:?}}")
+
+	if [ "${q99%.*}" -ge 20 ]; then
+		mono=1
+	fi
+
+	echo q99=$q99 ismono=$mono
+	rm $tmpdir/gain$$.log
+}
+
+argv=$(getopt -n "${0##*/}" -o t:g: -al ss:,to:,gain: -- "$@")
+eval set -- "$argv"
+while :; do
+	case "$1" in
+		--ss) ff_ss=${2:?}; shift 2 ;;
+		--to) ff_to=${2:?}; shift 2 ;;
+		-t) ff_t=${2:?}; shift 2 ;;
+		-g|--gain) gain=${2:?}; shift 2 ;;
+		--) shift; break ;;
+		*) echo >&2 "unrecognized option: $1"; false ;;
+	esac
+done
+
+for f; do
+	IsMono "$f"
+done
