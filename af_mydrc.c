@@ -270,7 +270,7 @@ static int config_input(AVFilterLink *inlink)
     AVFilterContext *ctx = inlink->dst;
     MyDRCContext *s = ctx->priv;
 
-    int hz = 150;
+    int hz = 100;
     double RC = 1 / (2 * M_PI * hz);
     s->hi_a = RC / (RC + 1.0 / inlink->sample_rate);
 
