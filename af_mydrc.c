@@ -312,12 +312,6 @@ static inline double fade(double prev, double next, int pos,
     return fade_factors[0][pos] * prev + fade_factors[1][pos] * next;
 }
 
-static inline double bound(const double threshold, const double val)
-{
-    const double CONST = 0.8862269254527580136490837416705725913987747280611935; //sqrt(PI) / 2.0
-    return erf(CONST * (val / threshold)) * threshold;
-}
-
 static double rms_sum(MyDRCContext *s, float *data, int c, int ns)
 {
     double sum = 0;
