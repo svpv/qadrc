@@ -79,16 +79,15 @@ Transcode()
 		vars=$(perl -le '
 			use v5.12;
 			my $range  = shift;
-			my $dbleft = shift;
 			my $rlow   = shift;
 			my $target = shift;
 			my $ratio  = 0 + sprintf "%.2f", $range / ($target + ($range - $target) / 3);
-			my $thresh = 0 + sprintf "%.0f", (-15 - $range - $dbleft + $rlow) / 2;
+			my $thresh = 0 + sprintf "%.0f", $rlow;
 			my $knee   = 0 + sprintf "%.0f", 2 * $range;
 			say "ratio=$ratio thresh=$thresh knee=$knee";
-			' -- $g1range $g1db $g1rlow $drc_range)
+			' -- $g1range $g1rlow $drc_range)
 		local $vars
-		drc="asplit[i1][i2];[i1]qadrc=$thresh:$ratio:$knee[o1];[i2]mydrc=$(($thresh-2)):$ratio:$knee[o2];[o1][o2]amix"
+		drc="asplit[i1][i2];[i1]qadrc=$(($thresh+2)):$ratio:$knee[o1];[i2]mydrc=$(($thresh-1)):$ratio:$knee[o2];[o1][o2]amix"
 		AF=${AF:+$AF,}$drc
 
 		ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
