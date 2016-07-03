@@ -218,6 +218,16 @@ static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, siz
 	    float cL = dB_to_scale(cG);
 	    data[0][off+i] *= cL;
 	    data[1][off+i] *= cL;
+#if 0
+	    static int cnt;
+	    static double sum;
+	    sum += cL;
+	    if (++cnt == 480) {
+		fprintf(stderr, "\ncL=%f\n", sum / 480);
+		sum = 0;
+		cnt = 0;
+	    }
+#endif
 	}
 	break;
     default:

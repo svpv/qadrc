@@ -67,9 +67,6 @@ typedef struct MyDRCContext {
     double hi_x[8];
     double hi_y[8];
     bool hi_once;
-
-    int cnt;
-    double sum;
 } MyDRCContext;
 
 #define OFFSET(x) offsetof(MyDRCContext, x)
@@ -352,6 +349,9 @@ static double get_frame_rms_dB(MyDRCContext *s, AVFrame *frame)
 
 static double minimum_filter(cqueue *q)
 {
+#if 0
+    return cqueue_peek(q, cqueue_size(q) / 2);
+#endif
     double min = DBL_MAX;
     int i;
 
@@ -364,6 +364,9 @@ static double minimum_filter(cqueue *q)
 
 static double gaussian_filter(MyDRCContext *s, cqueue *q)
 {
+#if 0
+    return cqueue_peek(q, cqueue_size(q) / 2);
+#endif
     double result = 0.0;
     int i;
 
@@ -463,11 +466,13 @@ static void amplify_frame(MyDRCContext *s, AVFrame *frame)
             dst_ptr[i] *= amplification_factor;
         }
 #if 0
-	s->sum += amplification_factor;
-	if (++s->cnt == 480) {
-	    fprintf(stderr, "\ncL=%f\n", s->sum / 480);
-	    s->sum = 0;
-	    s->cnt = 0;
+	static int cnt;
+	static double sum;
+	sum += amplification_factor;
+	if (++cnt == 480) {
+	    fprintf(stderr, "\ncL=%f\n", sum / 480);
+	    sum = 0;
+	    cnt = 0;
 	}
 #endif
 
