@@ -19,6 +19,9 @@ priming=
 # use dynamic range compression when appropriate
 no_drc=
 
+# compress towards this dynamic range
+drc_range=10dB
+
 # seek and duration support
 . $av0dir/ffseek.sh
 
@@ -72,17 +75,18 @@ Transcode()
 	fi
 
 	local drc=
-	if [ -z "$no_drc" ] && [ "${g1range%.*}" -ge 10 ]; then
+	if [ -z "$no_drc" ] && [ ${g1range%.*} -gt ${drc_range%dB} ]; then
 		vars=$(perl -le '
 			use v5.12;
 			my $range  = shift;
 			my $dbleft = shift;
 			my $rlow   = shift;
-			my $ratio  = 0 + sprintf "%.2f", $range / (9.9 + ($range - 9.9) / 3);
+			my $target = shift;
+			my $ratio  = 0 + sprintf "%.2f", $range / ($target + ($range - $target) / 3);
 			my $thresh = 0 + sprintf "%.0f", (-15 - $range - $dbleft + $rlow) / 2;
 			my $knee   = 0 + sprintf "%.0f", 2 * $range;
 			say "ratio=$ratio thresh=$thresh knee=$knee";
-			' -- $g1range $g1db $g1rlow)
+			' -- $g1range $g1db $g1rlow $drc_range)
 		local $vars
 		drc="asplit[i1][i2];[i1]qadrc=$thresh:$ratio:$knee[o1];[i2]mydrc=$(($thresh-2)):$ratio:$knee[o2];[o1][o2]amix"
 		AF=${AF:+$AF,}$drc
@@ -120,13 +124,14 @@ Transcode()
 	fi
 }
 
-argv=$(getopt -n "${0##*/}" -o t:V: -al mono,stereo,no-drc,priming:,ss:,to:,tvbr: -- "$@")
+argv=$(getopt -n "${0##*/}" -o t:V: -al mono,stereo,no-drc,drc-range:,priming:,ss:,to:,tvbr: -- "$@")
 eval set -- "$argv"
 while :; do
 	case "$1" in
 		--mono) mono=yes; shift ;;
 		--stereo) mono=no; shift ;;
 		--no-drc) no_drc=1; shift ;;
+		--drc-range) drc_range=${2:?}; shift 2;;
 		--priming) priming=${2:?}; shift 2 ;;
 		--ss) ff_ss=${2:?}; shift 2 ;;
 		--to) ff_to=${2:?}; shift 2 ;;
