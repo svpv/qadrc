@@ -121,6 +121,8 @@ Transcode()
 		qaac -o "$2" $priming $adts --tvbr=${TVBR:-$tvbr} -
 		set +o pipefail
 	fi
+
+	rm $tmpdir/gain$$.log
 }
 
 argv=$(getopt -n "${0##*/}" -o t:V: -al mono,stereo,no-drc,drc-range:,priming:,ss:,to:,tvbr: -- "$@")
