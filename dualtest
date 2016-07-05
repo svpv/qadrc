@@ -1,0 +1,48 @@
+#!/bin/bash -efux
+#
+# dualtest - test dualmono filters
+# Usage: ./dualtest [-acodec pcm_f32le]
+#
+# Written by Alexey Tourbin.
+# This file is distributed as Public Domain.
+
+av0=$(readlink -ev "$0")
+av0dir=$(dirname "$av0")
+
+. $av0dir/calc.sh
+. $av0dir/dualmono.sh
+
+sox -t sw -r 48000 -c 1 /dev/zero noise.wav synth 60 pinknoise fade q 20 60 20
+ffmpeg -i noise.wav                          "$@" -y mono.wav
+ffmpeg -i noise.wav -af pan='2c|c0=c0|c1=c0' "$@" -y stereo.wav
+
+m1=$(set -o pipefail; ffmpeg -i mono.wav   -af ebur128,volumedetect,replaygain -f null - |& $av0dir/aacgain15pp m1)
+m2=$(set -o pipefail; ffmpeg -i mono.wav   -af replaygain,volumedetect,ebur128 -f null - |& $av0dir/aacgain15pp m2)
+s1=$(set -o pipefail; ffmpeg -i stereo.wav -af ebur128,volumedetect,replaygain -f null - |& $av0dir/aacgain15pp s1)
+s2=$(set -o pipefail; ffmpeg -i stereo.wav -af replaygain,volumedetect,ebur128 -f null - |& $av0dir/aacgain15pp s2)
+eval ${m1:?} ${m2:?} ${s1:?} ${s2:?}
+DualMono m1eb1
+DualMono m1rg1
+DualMono m2rg1
+DualMono m2vd1
+DualMono m2eb1
+Cmp()
+{
+	local v1=$1 v2; shift
+	for v2; do
+		Cond "abs(${v1:?} - ${v2:?}) < 0.111"
+	done
+}
+CmpV()
+{
+	local vars
+	vars=$(for v; do echo \$m1$v \$m2$v \$s1$v \$s2$v; done)
+	eval Cmp $vars
+}
+CmpV rg1gain
+CmpV rg1peak vd1peak
+CmpV vd1q999
+CmpV eb1gain
+CmpV eb1range
+CmpV eb1rlow
+:

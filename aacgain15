@@ -8,6 +8,9 @@
 av0=$(readlink -ev "$0")
 av0dir=$(dirname "$av0")
 
+. $av0dir/calc.sh
+. $av0dir/dualmono.sh
+
 tmpdir=${TMPDIR:-/tmp}
 dry_run=
 noclip=
@@ -23,11 +26,39 @@ AACGain15()
 	local vars
 	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
 	local $vars
-	echo $vars
+	if [ ${g0ch:?} = 1 ]; then
+		DualMono rg1
+		DualMono eb1
+	fi
+	vars=$(perl -e 'use v5.12;
+		my $db1 = shift;
+		my $db2 = shift;
+		my $peak = shift;
+		my $db = ($db1 + $db2) / 2;
+		use POSIX qw(floor);
+		my $igain = floor 0.5 + $db / (5 * log(2) / log(10));
+		my $igain2db = $igain * (5 * log(2) / log(10));
+		my $igaink = $igain;
+		my $igaink2db = $igain2db;
+		while ($peak + $igaink2db > 0.001) {
+			$igaink--;
+			$igaink2db = $igaink * (5 * log(2) / log(10));
+		}
+		my $dbleft  = 0 + sprintf "%.2f", $db - $igain2db;
+		my $dbleftk = 0 + sprintf "%.2f", $db - $igaink2db;
+		$db = 0 + sprintf "%.2f", $db;
+		say "g1db=$db";
+		say "g1igain=$igain";
+		say "g1igaink=$igaink";
+		say "g1dbleft=$dbleft";
+		say "g1dbleftk=$dbleftk";
+		' -- ${rg1gain:?} ${eb1gain:?} ${rg1peak:?})
+	local $vars
+	echo rg1gain=$rg1gain eb1gain=$eb1gain g1db=$g1db eb1range=$eb1range eb1rlow=$eb1rlow rg1peak=$rg1peak
+	echo g1igain=$g1igain g1igaink=$g1igaink g1dbleft=$g1dbleft g1dbleftk=$g1dbleftk
 	local igain=${g1igain:?}
-	[ -z "$noclip" ] || gain=${g1igaink:?}
-	[ "$igain" = 0 ] ||
-	[ -n "$dry_run" ] ||
+	[ -z "$noclip" ] || igain=${g1igaink:?}
+	[ "$igain" = 0 ] || [ -n "$dry_run" ] ||
 	aacgain -g "$igain" "$1" >&2
 	rm $tmpdir/gain$$.log
 }

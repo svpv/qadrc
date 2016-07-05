@@ -7,6 +7,11 @@
 
 use v5.12;
 
+our $P;
+INIT {
+	$P = shift;
+}
+
 our $B;
 if (/^Input #/../^Output #/ and /^\s*Duration: .*(, bitrate.+)/) {
 	$B = $1;
@@ -19,90 +24,78 @@ if (/^Input #/../^Output #/ and s/^\s*Stream #(\d[:.]\d)\b[^:]*: Audio: //) {
 }
 
 if (/^Input #0, (\w+)/) {
-	say "g0format=$1";
+	say "${P}g0format=$1";
 }
 
 our $ch;
 if (/^Stream mapping/../^Press/ and /^\s*Stream #(\d[:.]\d) -> /) {
 	local $_ = $A{$1};
-	say "g0codec=$1" if /(\w+)/;
-	say "g0srate=$1" if /\b([1-9]\d{4}) Hz\b/;
-	say "g0brate=$1" if /\b([1-9]\d{1,3}) kb/;
+	say "${P}g0codec=$1" if /(\w+)/;
+	say "${P}g0srate=$1" if /\b([1-9]\d{4}) Hz\b/;
+	say "${P}g0brate=$1" if /\b([1-9]\d{1,3}) kb/;
 	$ch =  1 if /\bmono\b/;
 	$ch =  2 if /\bstereo\b/;
 	$ch =  5 if /, 5\.1\b/;
 	$ch = $1 if /\b(\d) channel/;
-	say "g0ch=$ch";
+	say "${P}g0ch=$ch";
 }
 
-our @db1;
-if (/replaygain.* track_gain = (\S+)/) {
-	my $db = 0 + $1;
-	$db -= 3.01 unless $ch == 2 and not @db1;
-	$db = 0 + sprintf "%.2f", $db;
-	push @db1, $db;
-	my $n = @db1;
-	say "g${n}db1=$db1[-1]";
+our @rg;
+if (/^\[Parsed_replaygain_(\d+) /) {
+	my $i = 0 + $1;
+	if (/ track_gain = (\S+)/) {
+		$rg[$i]{gain} = 0 + $1;
+	}
+	elsif (/ track_peak = (\S+)/) {
+		my $f = (0 + $1) || 1e-5;
+		my $db = 20 * log($f) / log(10);
+		$db = 0 + sprintf "%.2f", $db;
+		$rg[$i]{peak} = $db;
+	}
 }
 
-our @peak;
-if (/replaygain.* track_peak = (\S+)/) {
-	my $f = (0 + $1) || 1e-5;
-	my $db = 20 * log($f) / log(10);
-	$db += 3.01 unless $ch == 2 and not @peak;
-	$db = 0 + sprintf "%.2f", $db;
-	push @peak, $db;
-	my $n = @peak;
-	say "g${n}peak=$peak[-1]";
+our @eb;
+our $ebi;
+if (/^\[Parsed_ebur128_(\d+) .* Summary:/) {
+	$ebi = 0 + $1;
+}
+elsif (defined $ebi) {
+	if (/^ +I: +(?=.*LUFS)(\S+)/) {
+		my $db = -18 - $1;
+		$db = 0 + sprintf "%.2f", $db;
+		$eb[$ebi]{gain} = $db;
+	}
+	elsif (/^ +LRA: +(\S+)/) {
+		$eb[$ebi]{range} = 0 + $1;
+	}
+	elsif (/^ +LRA low: +(\S+)/) {
+		$eb[$ebi]{rlow} = 0 + $1;
+	}
 }
 
-our @db2;
-if (/^ +I: +(?=.*LUFS)(\S+)/) {
-	my $db = 0 + $1;
-	$db = -18 - $db;
-	$db -= 3.01 unless $ch == 2 and not @db2;
-	$db = 0 + sprintf "%.2f", $db;
-	push @db2, $db;
-	my $n = @db2;
-	say "g${n}db2=$db2[-1]";
+our @vd;
+if (/^\[Parsed_volumedetect_(\d+) /) {
+	my $i = 0 + $1;
+	if (/ max_volume: (\S+) /) {
+		$vd[$i]{peak} = 0 + $1;
+	}
+	elsif (/ histogram_(\d+)db: /) {
+		$vd[$i]{q999} = 0 - $1;
+	}
 }
 
-our @range;
-if (/^ +LRA: +(\S+)/) {
-	push @range, 0 + $1;
-	my $n = @range;
-	say "g${n}range=$range[-1]";
+sub Print ($+@) {
+	my $p = shift;
+	my $v = shift;
+	my @v = grep { $_ } @$v;
+	unshift @v, 0;
+	for my $i (1 .. $#v) {
+		say "$P$p$i$_=$v[$i]{$_}" for @_;
+	}
 }
-
-our @rlow;
-if (/^ +LRA low: +(\S+)/) {
-	push @rlow, 0 + $1;
-	my $n = @rlow;
-	say "g${n}rlow=$rlow[-1]";
-}
-
-use POSIX qw(floor);
 
 END {
-	for my $i (0 .. $#db1) {
-		last if $i > $#db2;
-		my $db = ($db1[$i] + $db2[$i]) / 2;
-		my $n = $i + 1;
-		my $igain = floor 0.5 + $db / (5 * log(2) / log(10));
-		my $igain2db = $igain * (5 * log(2) / log(10));
-		my $igaink = $igain;
-		my $igain2dbk = $igain2db;
-		while ($peak[$i] + $igain2dbk > 0.001) {
-			$igaink--;
-			$igain2dbk = $igaink * (5 * log(2) / log(10));
-		}
-		my $dbleft =  0 + sprintf "%.2f", $db - $igain2db;
-		my $dbleftk = 0 + sprintf "%.2f", $db - $igain2dbk;
-		$db = 0 + sprintf "%.2f", $db;
-		say "g${n}db=$db";
-		say "g${n}igain=$igain";
-		say "g${n}igaink=$igaink";
-		say "g${n}dbleft=$dbleft";
-		say "g${n}dbleftk=$dbleftk";
-	}
+	Print rg => @rg, qw(gain peak);
+	Print eb => @eb, qw(gain range rlow);
+	Print vd => @vd, qw(peak q999);
 }
