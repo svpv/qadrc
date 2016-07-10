@@ -22,8 +22,14 @@ no_drc=
 # compress towards this dynamic range
 drc_range=10dB
 
+. $av0dir/calc.sh
+. $av0dir/dualmono.sh
+
 # seek and duration support
 . $av0dir/ffseek.sh
+
+# predefined album gain
+gain=
 
 # quality control
 VBR= TVBR=
@@ -32,46 +38,26 @@ Transcode()
 {
 	ffseek
 
-	local ff_decode_pre=
-	if [[ $1 = *.[Mm][Pp]3 ]]; then
-		ff_decode_pre='-acodec mp3float'
-	fi
+	. $av0dir/mono.sh
 
-	ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
-		-af replaygain,ebur128=framelog=verbose,pan='mono|c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
-		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
-
-	local vars
-	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
-	local $vars
+	case $mono in
+		no) ismono=$(Calc "${ismono:?} >= 2 ? $ismono : 0") ;;
+		yes) ismono=9 ;;
+	esac
 
 	local vbr=4 tvbr=82
 	[ ${g0brate:?} -lt 180 ] || vbr=3 tvbr=91
 
-	local codec=${g0codec:?}
-	local format=${g0format:?}
-
-	if [ $codec = mp2 ]; then
-		ff_decode_pre='-acodec mp2float'
-	fi
-	if [ $codec = mp3 ]; then
-		ff_decode_pre='-acodec mp3float'
-	fi
-
 	# -af chain
-	local AF=
+	local AF=${downmix:+$downmix,}
 
-	if [ ${g0ch:?} -gt 2 ]; then
-		AF=${AF:+$AF,}aresample='ocl=stereo'
-	fi
-
-	case $mono in
-		no) mono= ;;
-		'') mono=$(perl -e "print 1 if ${g2db1:?} - ${g1db:?} > 20") ;;
-	esac
-
-	if [ -n "$mono" ]; then
-		AF=${AF:+$AF,}pan='mono|c0=0.5*c0+0.5*c1'
+	if [ ${ismono:?} -gt 0 ]; then
+		if [ ${g0ch:?} -gt 1 ]; then
+			: ${c0afm:='pan=1c|c0=0.5*c0+0.5*c1'}
+			AF=${AF:+$AF,}${c0afm:?}
+		fi
+	elif [ ${c0db:?} != 0 ]; then
+			AF=${AF:+$AF,}${c0afs:?}
 	fi
 
 	local drc=
@@ -96,6 +82,12 @@ Transcode()
 
 		vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
 		local $vars
+		if [ ${g0ch:?} = 1 ]; then
+			DualMono rg1
+			DualMono eb1
+		fi
+		g1db=$(Calc2f "(${rg1gain:?} + ${eb1gain:?}) / 2")
+		g1peak=$rg1peak g1range=$eb1range g1rlow=$eb1rlow
 	fi
 
 	if [ ${g1db:?} != 0 ]; then

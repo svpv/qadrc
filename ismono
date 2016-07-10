@@ -10,6 +10,9 @@ av0dir=$(dirname "$av0")
 
 tmpdir=${TMPDIR:-/tmp}
 
+. $av0dir/calc.sh
+. $av0dir/dualmono.sh
+
 # seek and duration support
 . $av0dir/ffseek.sh
 
@@ -19,28 +22,8 @@ gain=
 IsMono()
 {
 	ffseek
-
-	local ff_decode_pre=
-	if [[ $1 = *.[Mm][Pp]3 ]]; then
-		ff_decode_pre='-acodec mp3float'
-	fi
-
-	ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
-		-af replaygain,ebur128=framelog=verbose,pan='mono|c0=0.5*c0+-0.5*c1',replaygain=percent=99 \
-		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
-
-	local vars
-	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
-	local $vars
-
-	local q99 mono=
-	q99=$(perl -e "print ${g2db1:?} - ${gain:-${g1db:?}}")
-
-	if [ "${q99%.*}" -ge 20 ]; then
-		mono=1
-	fi
-
-	echo q99=$q99 ismono=$mono
+	. $av0dir/mono.sh
+	echo c0db=$c0db g1db=$g1db q999=$q999 q99=$q99 ismono=$ismono
 	rm $tmpdir/gain$$.log
 }
 

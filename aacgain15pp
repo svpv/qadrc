@@ -79,6 +79,9 @@ if (/^\[Parsed_volumedetect_(\d+) /) {
 	if (/ max_volume: (\S+) /) {
 		$vd[$i]{peak} = 0 + $1;
 	}
+	elsif (/ mean_volume: (\S+) /) {
+		$vd[$i]{mean} = 0 + $1;
+	}
 	elsif (/ histogram_(\d+)db: /) {
 		$vd[$i]{q999} = 0 - $1;
 	}
@@ -97,5 +100,5 @@ sub Print ($+@) {
 END {
 	Print rg => @rg, qw(gain peak);
 	Print eb => @eb, qw(gain range rlow);
-	Print vd => @vd, qw(peak q999);
+	Print vd => @vd, qw(peak mean q999);
 }
