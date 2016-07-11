@@ -56,8 +56,15 @@ if (/^\[Parsed_replaygain_(\d+) /) {
 
 our @eb;
 our $ebi;
-if (/^\[Parsed_ebur128_(\d+) .* Summary:/) {
+if (/(?:^|\r)\[Parsed_ebur128_(\d+) .* M: *(\S+) +S: *(\S+) /) {
+	my $ebi = 0 + $1;
+	push @{$eb[$ebi]{M}}, 0 + sprintf "%.2f", 18 + $2 if $2 == $2; # not NaN
+	push @{$eb[$ebi]{S}}, 0 + sprintf "%.2f", 18 + $3 if $3 == $3; # not NaN
+}
+elsif (/^\[Parsed_ebur128_(\d+) .* Summary:/) {
 	$ebi = 0 + $1;
+	$eb[$ebi]{M} //= [];
+	$eb[$ebi]{S} //= [];
 }
 elsif (defined $ebi) {
 	if (/^ +I: +(?=.*LUFS)(\S+)/) {
@@ -87,18 +94,45 @@ if (/^\[Parsed_volumedetect_(\d+) /) {
 	}
 }
 
+sub PrintHist ($+) {
+	my $x = shift;
+	my $v = shift;
+	@$v = sort { $a <=> $b } @$v;
+	splice @$v, 0,  4 - 1 if $x =~ /M\z/;
+	splice @$v, 0, 30 - 1 if $x =~ /S\z/;
+	say "${x}10=", $$v[$#$v*0.10];
+	say "${x}25=", $$v[$#$v*0.25];
+	say "${x}50=", $$v[$#$v*0.50];
+	say "${x}75=", $$v[$#$v*0.75];
+	say "${x}90=", $$v[$#$v*0.90];
+	say "${x}95=", $$v[$#$v*0.95];
+	say "${x}98=", $$v[$#$v*0.98];
+	say "${x}99=", $$v[$#$v*0.99];
+	say "${x}995=", $$v[$#$v*0.995];
+	say "${x}999=", $$v[$#$v*0.999];
+}
+
 sub Print ($+@) {
 	my $p = shift;
 	my $v = shift;
 	my @v = grep { $_ } @$v;
 	unshift @v, 0;
 	for my $i (1 .. $#v) {
-		say "$P$p$i$_=$v[$i]{$_}" for @_;
+		for (@_) {
+			my $x = "$P$p$i$_";
+			my $w = $v[$i]{$_};
+			if (ref $w) {
+				PrintHist $x => $w;
+			}
+			else {
+				say "$x=$w";
+			}
+		}
 	}
 }
 
 END {
 	Print rg => @rg, qw(gain peak);
-	Print eb => @eb, qw(gain range rlow);
+	Print eb => @eb, qw(gain range rlow S M);
 	Print vd => @vd, qw(peak mean q999);
 }
