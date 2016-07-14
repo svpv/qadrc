@@ -179,8 +179,12 @@ sub key_press {
 	}
 }
 
-use constant WW => 1278;
+our $WW = int 0.5 + @data / 5;
 use constant HH => 640;
+
+sub i2cr ($) {
+	0.5 + $_[0] / 5;
+}
 
 sub y2cr ($) {
 	HH - ($_[0] - $dmin) / ($dmax - $dmin) * HH - 0.5;
@@ -188,7 +192,7 @@ sub y2cr ($) {
 
 our $surf;
 sub create_image {
-	$surf ||= Cairo::ImageSurface->create('argb32', WW, HH);
+	$surf ||= Cairo::ImageSurface->create('argb32', $WW, HH);
 	my $cr = Cairo::Context->create($surf);
 	$cr->set_line_width(1);
 	$cr->set_source_rgb(1, 1, 1);
@@ -196,27 +200,23 @@ sub create_image {
 	$cr->paint;
 	$cr->set_source_rgb(0.5, 0.5, 0.5);
 	$cr->move_to(0, HH);
-	my $step = WW / @data;
 	for my $i (0 .. $#data) {
-		my $x = $i * $step + $step / 2;
-		$cr->line_to($x, y2cr $data[$i]);
+		$cr->line_to(i2cr $i, y2cr $data[$i]);
 	}
-	$cr->line_to(WW, HH);
+	$cr->line_to($WW, HH);
 	$cr->fill;
 	$cr->set_source_rgb(0, 0, 1);
 	for my $i (0 .. $#smooth) {
-		my $x = $i * $step + $step / 2;
-		$cr->line_to($x, y2cr $smooth[$i]);
+		$cr->line_to(i2cr $i, y2cr $smooth[$i]);
 	}
 	$cr->stroke;
 	$cr->set_source_rgb(0, 1, 0);
-	$cr->move_to( 0, y2cr $thrv);
-	$cr->line_to(WW, y2cr $thrv);
+	$cr->move_to(  0, y2cr $thrv);
+	$cr->line_to($WW, y2cr $thrv);
 	$cr->stroke;
 	$cr->set_source_rgb(0, 0, 1);
 	for ($thrp) {
-		my $x = $$_[0] * $step + $step / 2;
-		$cr->arc($x, y2cr $$_[1], 2, 0, 2 * 3.14);
+		$cr->arc(i2cr $$_[0], y2cr $$_[1], 2, 0, 2 * 3.14);
 		$cr->fill;
 	}
 	return $surf;
@@ -233,7 +233,7 @@ sub expose {
 }
 
 my $draw = Gtk2::DrawingArea->new;
-$draw->size(WW, HH);
+$draw->size($WW, HH);
 $draw->signal_connect('expose_event' => \&expose, $surf);
 
 sub render {
@@ -244,6 +244,16 @@ sub render {
 my $win = Gtk2::Window->new;
 $win->signal_connect('delete_event' => sub { Gtk2->main_quit });
 $win->signal_connect('key-press-event' => \&key_press);
-$win->add($draw);
+if ($WW <= 1200) {
+	$win->add($draw);
+}
+else {
+	my $scroll = Gtk2::ScrolledWindow->new;
+	$scroll->add_with_viewport($draw);
+	$scroll->set_policy('always', 'never');
+	$draw->set_size_request(-1, HH);
+	$scroll->set_size_request(1200, -1);
+	$win->add($scroll);
+}
 $win->show_all;
 Gtk2->main;
