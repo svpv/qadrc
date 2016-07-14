@@ -9,17 +9,15 @@ MonoTry2()
 {
 	ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
 		-af "${downmix:+$downmix,}$c0afs,replaygain,ebur128=framelog=verbose,
-		pan=1c|c0=0.5*c0+-0.5*c1,volumedetect,replaygain=percent=99" \
+		pan=1c|c0=0.5*c0+-0.5*c1,ebur128" \
 		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 	local vars
 	vars=$($av0dir/aacgain15pp <$tmpdir/gain$$.log)
-	#local $vars
-	eval $vars
-	DualMono rg2
+	local $vars
 	g1db=$(Calc2f "(${rg1gain:?} + ${eb1gain:?}) / 2")
 	g1peak=$rg1peak g1range=$eb1range g1rlow=$eb1rlow
-	q999=$(Calc2f "${gain:-${g1db:?}} + ${vd1q999:?}")
-	q99=$( Calc2f "${gain:-${g1db:?}} - ${rg2gain:?}")
+	q999=$(Calc2f "${gain:-${g1db:?}} + ${eb2S999:?}")
+	q99=$( Calc2f "${gain:-${g1db:?}} + ${eb2S99:?} ")
 }
 
 {
@@ -40,7 +38,7 @@ MonoTry2()
 		[i1]ebur128=framelog=verbose,
 		    pan=1c|c0=c0,volumedetect,ebur128=framelog=verbose[o1];
 		[i2]pan=1c|c0=c1,volumedetect,ebur128=framelog=verbose[o2];
-		[i3]pan=1c|c0=0.5*c0+-0.5*c1,volumedetect,replaygain=percent=99,ebur128[o3];
+		[i3]pan=1c|c0=0.5*c0+-0.5*c1,volumedetect,ebur128[o3];
 		[o1][o2][o3]amix=3" \
 		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
 
@@ -67,9 +65,8 @@ MonoTry2()
 	g1peak=$rg1peak g1range=$eb1range g1rlow=$eb1rlow
 
 	if [ $g0ch -gt 1 ]; then
-		DualMono rg2
-		q999=$(Calc2f "${gain:-${g1db:?}} + ${vd3q999:?}")
-		q99=$( Calc2f "${gain:-${g1db:?}} - ${rg2gain:?}")
+		q999=$(Calc2f "${gain:-${g1db:?}} + ${eb4S999:?}")
+		q99=$( Calc2f "${gain:-${g1db:?}} + ${eb4S99:?} ")
 
 		local save_vars='g1db rg1peak eb1range eb1rlow q999 q99'
 		c0db=$(Calc3f "($eb2gain - $eb3gain + $vd2mean - $vd1mean) / 2")
@@ -99,7 +96,7 @@ MonoTry2()
 		ismono=3 q999=-91 q99=-61
 	elif Cond "${q999:?} <= -40"; then
 		ismono=2
-	elif Cond "${q99:?} <= -20"; then
+	elif Cond "${q99:?} <= -20.56"; then
 		ismono=1
 	fi
 }
