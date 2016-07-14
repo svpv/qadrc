@@ -1,0 +1,225 @@
+#!/usr/bin/perl
+
+use v5.12;
+
+use Inline C => <<'END';
+void boxblur1(char *vp, char *wp, int n, int r)
+{
+	int i;
+	double *v = (double *) vp;
+	double *w = (double *) wp;
+	int d = 2 * r + 1;
+	double sum = v[0];
+	for (i = 1; i < r + 1; i++)
+		sum += 2 * v[i];
+	w[0] = sum / d;
+	for (i = r + 1; i < d; i++) {
+		sum += v[i];
+		sum -= v[d - i];
+		w[i - r] = sum / d;
+	}
+	for (i = d; i < n; i++) {
+		sum += v[i];
+		sum -= v[i - d];
+		w[i - r] = sum / d;
+	}
+	for (i = n; i < n + r; i++) {
+		int j = n - (i - n) - 2;
+		sum += v[j];
+		sum -= v[i - d];
+		w[i - r] = sum / d;
+	}
+}
+END
+
+my $radius = 25;
+
+sub smooth (+;$) {
+	my $a = shift;
+	my $r = shift || $radius;
+	my $v = pack "d*", @$a;
+	my $w = 1 x length $v;
+	boxblur1($v, $w, 1+$#$a, $r);
+	boxblur1($w, $v, 1+$#$a, $r);
+	boxblur1($v, $w, 1+$#$a, $r);
+	unpack "d*", $w;
+}
+
+sub peaks (+) {
+	my $a = shift;
+	my $x0 = @$a[0];
+	my $rising = 0;
+	my @peaks;
+	for (my $i = 1; $i < @$a; $i++) {
+		my $x1 = $$a[$i];
+		if ($x1 > $x0) {
+			$rising = $i;
+			$x0 = $x1;
+		}
+		elsif ($x1 < $x0) {
+			push @peaks, [ $rising, $x0 ] if defined $rising;
+			undef $rising;
+			$x0 = $x1;
+		}
+	}
+	push @peaks, [ $rising, $x0 ] if defined $rising;
+	return @peaks;
+}
+
+sub sort_peaks (+) {
+	my $v = shift;
+	my @peaks = sort { $$b[1] <=> $$a[1] } @$v;
+	my $prev;
+	for (@peaks) {
+		if (not defined $prev) {
+			$prev = $$_[1];
+			next;
+		}
+		$$_[2] = $prev - $$_[1];
+		$prev = $$_[1];
+	}
+	return @peaks;
+}
+
+sub argmax (&+) {
+	my $block = shift;
+	my $array = shift;
+	my ($maxi, $maxo, $maxv);
+	my $i = 0;
+	for (@$array) {
+		my $v = $block->();
+		($maxi, $maxo, $maxv) = ($i, $_, $v)
+			if not defined $maxi or $v > $maxv;
+		$i++;
+	}
+	return wantarray ? ($maxi, $maxo, $maxv) : $maxi;
+}
+
+my @data = <>;
+
+use List::Util qw(max min);
+my $dmax = max @data;
+my $dmin = min @data;
+
+my @smooth;
+my @peaks;
+my ($thri, $thrp, $thrv);
+sub mkdata {
+	@smooth = smooth @data;
+	@peaks = peaks @smooth;
+	@peaks = sort_peaks @peaks;
+	(undef, $thrp) = argmax { $$_[2] } @peaks;
+	($thri, $thrv) = @$thrp[0,1];
+}
+mkdata();
+
+sub mkparts {
+	my $i = 0;
+	my @parts;
+	while (1) {
+		$i++ while $i < @smooth and $smooth[$i] > $thrv;
+		last if $i == @smooth;
+		my $j = $i + 1;
+		$j++ while $j < @smooth and $smooth[$j] <= $thrv;
+		push @parts, [$i, $j - 1];
+		last if $j == @smooth;
+		$i = $j;
+	}
+	join "," => map { "$$_[0]-$$_[1]" } @parts;
+}
+
+use Gtk2 '-init';
+use Glib qw(TRUE FALSE);
+
+our %KS;
+require Gtk2::Gdk::Keysyms;
+*KS = \%Gtk2::Gdk::Keysyms;
+
+sub key_press {
+	my ($widget, $event) = @_;
+	my $key = $event->keyval;
+	if    ($key == $KS{Up}) {
+		$radius++;
+		mkdata();
+		render();
+	}
+	elsif ($key == $KS{Down}) {
+		$radius-- if $radius > 1;
+		mkdata();
+		render();
+	}
+	elsif ($key == $KS{Return} or $key == $KS{KP_Enter}) {
+		say mkparts();
+		Gtk2->main_quit;
+		exit 0;
+	}
+}
+
+use constant WW => 1278;
+use constant HH => 640;
+
+sub y2cr ($) {
+	HH - ($_[0] - $dmin) / ($dmax - $dmin) * HH - 0.5;
+}
+
+our $surf;
+sub create_image {
+	$surf ||= Cairo::ImageSurface->create('argb32', WW, HH);
+	my $cr = Cairo::Context->create($surf);
+	$cr->set_line_width(1);
+	$cr->set_source_rgb(1, 1, 1);
+	$cr->set_operator('source');
+	$cr->paint;
+	$cr->set_source_rgb(0.5, 0.5, 0.5);
+	$cr->move_to(0, HH);
+	my $step = WW / @data;
+	for my $i (0 .. $#data) {
+		my $x = $i * $step + $step / 2;
+		$cr->line_to($x, y2cr $data[$i]);
+	}
+	$cr->line_to(WW, HH);
+	$cr->fill;
+	$cr->set_source_rgb(0, 0, 1);
+	for my $i (0 .. $#smooth) {
+		my $x = $i * $step + $step / 2;
+		$cr->line_to($x, y2cr $smooth[$i]);
+	}
+	$cr->stroke;
+	$cr->set_source_rgb(0, 1, 0);
+	$cr->move_to( 0, y2cr $thrv);
+	$cr->line_to(WW, y2cr $thrv);
+	$cr->stroke;
+	$cr->set_source_rgb(0, 0, 1);
+	for ($thrp) {
+		my $x = $$_[0] * $step + $step / 2;
+		$cr->arc($x, y2cr $$_[1], 2, 0, 2 * 3.14);
+		$cr->fill;
+	}
+	return $surf;
+}
+
+create_image();
+
+sub expose {
+	my ($widget, $event, $surf) = @_;
+	my $cr = Gtk2::Gdk::Cairo::Context->create($widget->window);
+	$cr->set_source_surface($surf, 0, 0);
+	$cr->paint;
+	return FALSE;
+}
+
+my $draw = Gtk2::DrawingArea->new;
+$draw->size(WW, HH);
+$draw->signal_connect('expose_event' => \&expose, $surf);
+
+sub render {
+	$surf = create_image();
+	expose($draw, '', $surf);
+}
+
+my $win = Gtk2::Window->new;
+$win->signal_connect('delete_event' => sub { Gtk2->main_quit });
+$win->signal_connect('key-press-event' => \&key_press);
+$win->add($draw);
+$win->show_all;
+Gtk2->main;
