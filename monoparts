@@ -95,11 +95,35 @@ sub argmax (&+) {
 	return wantarray ? ($maxi, $maxo, $maxv) : $maxi;
 }
 
-my @data = <>;
+use Getopt::Long qw(GetOptions);
+GetOptions "gain=f" => \my $gain
+	or die "GetOptions failed";
+
+sub lufs {
+	my $db = shift;
+	return -60 if $db != $db; # NaN
+	$db = 0 + sprintf "%.2f", 18 + $gain + $db;
+	return -60 if $db < -60;
+	return 0 if $db > 0;
+	return $db;
+}
+
+sub parse_ebur128_log {
+	my @eb;
+	local $_;
+	while (<>) {
+		next unless /(?:^|\r)\[Parsed_ebur128_(\d+) .* M: *(\S+) +S: *(\S+) /;
+		push @{$eb[$1]{M}}, lufs $2;
+		push @{$eb[$1]{S}}, lufs $3;
+	}
+	return @{$eb[-1]{S}};
+}
+
+my @data = parse_ebur128_log;
 
 use List::Util qw(max min);
-my $dmax = max @data;
-my $dmin = min @data;
+my $dmax = 0;
+my $dmin = -60;
 
 my @smooth;
 my @peaks;
