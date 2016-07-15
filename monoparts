@@ -135,8 +135,10 @@ sub rolloff_release ($+$) {
 sub rolloff (++$) {
 	my ($parts, $smooths, $thrv) = @_;
 	for my $part (@$parts) {
-		$$part[0] = rolloff_release $$part[0], $smooths, $thrv;
-		$$part[1] = rolloff_attack  $$part[1], $smooths, $thrv;
+		$$part[0] = rolloff_release $$part[0], $smooths, $thrv
+			unless $part == $$parts[0] and $$part[0] == 0;
+		$$part[1] = rolloff_attack  $$part[1], $smooths, $thrv
+			unless $part == $$parts[-1] and $$part[1] == $#{$$smooths[-1]};
 	}
 }
 
