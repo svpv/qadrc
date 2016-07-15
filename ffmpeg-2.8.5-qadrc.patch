@@ -1,26 +1,28 @@
 --- ffmpeg-2.8.5/libavfilter/Makefile-	2016-01-15 19:58:35.000000000 +0300
 +++ ffmpeg-2.8.5/libavfilter/Makefile	2016-01-21 12:22:02.862775313 +0300
-@@ -79,6 +79,11 @@ OBJS-$(CONFIG_JOIN_FILTER)
+@@ -79,6 +79,12 @@ OBJS-$(CONFIG_JOIN_FILTER)
  OBJS-$(CONFIG_LADSPA_FILTER)                 += af_ladspa.o
  OBJS-$(CONFIG_LOWPASS_FILTER)                += af_biquads.o
  OBJS-$(CONFIG_PAN_FILTER)                    += af_pan.o
 +OBJS-$(CONFIG_QADRC_FILTER)                  += af_qadrc.o
 +OBJS-$(CONFIG_QALIMITER_FILTER)              += af_qalimiter.o
 +OBJS-$(CONFIG_MYDRC_FILTER)                  += af_mydrc.o
-+libavfilter/af_qadrc.o libavfilter/af_qalimiter.o libavfilter/af_mydrc.o: \
++OBJS-$(CONFIG_MONOPARTS_FILTER)              += af_monoparts.o
++libavfilter/af_qadrc.o libavfilter/af_qalimiter.o libavfilter/af_mydrc.o libavfilter/af_monoparts.o: \
 +CFLAGS += -g -ffast-math -ftree-vectorize -fopt-info-vec -Wno-vla -Wno-declaration-after-statement
  OBJS-$(CONFIG_REPLAYGAIN_FILTER)             += af_replaygain.o
  OBJS-$(CONFIG_RESAMPLE_FILTER)               += af_resample.o
  OBJS-$(CONFIG_SIDECHAINCOMPRESS_FILTER)      += af_sidechaincompress.o
 --- ffmpeg-2.8.5/libavfilter/allfilters.c-	2016-01-15 19:58:36.000000000 +0300
 +++ ffmpeg-2.8.5/libavfilter/allfilters.c	2016-01-21 12:17:28.880138173 +0300
-@@ -95,6 +95,9 @@ void avfilter_register_all(void)
+@@ -95,6 +95,10 @@ void avfilter_register_all(void)
      REGISTER_FILTER(LADSPA,         ladspa,         af);
      REGISTER_FILTER(LOWPASS,        lowpass,        af);
      REGISTER_FILTER(PAN,            pan,            af);
 +    REGISTER_FILTER(QADRC,          qadrc,          af);
 +    REGISTER_FILTER(QALIMITER,      qalimiter,      af);
 +    REGISTER_FILTER(MYDRC,          mydrc,          af);
++    REGISTER_FILTER(MONOPARTS,      monoparts,      af);
      REGISTER_FILTER(REPLAYGAIN,     replaygain,     af);
      REGISTER_FILTER(RESAMPLE,       resample,       af);
      REGISTER_FILTER(SIDECHAINCOMPRESS, sidechaincompress, af);
