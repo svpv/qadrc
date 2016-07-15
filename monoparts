@@ -32,11 +32,9 @@ void boxblur1(char *vp, char *wp, int n, int r)
 }
 END
 
-my $radius = 25;
-
-sub smooth (+;$) {
+sub smooth (+$) {
 	my $a = shift;
-	my $r = shift || $radius;
+	my $r = shift;
 	my $v = pack "d*", @$a;
 	my $w = 1 x length $v;
 	boxblur1($v, $w, 1+$#$a, $r);
@@ -79,6 +77,65 @@ sub sort_peaks (+) {
 		$prev = $$_[1];
 	}
 	return @peaks;
+}
+
+sub intersect (+$) {
+	my $smooth = shift;
+	my $thrv = shift;
+	my $i = 0;
+	my @parts;
+	while (1) {
+		$i++ while $i < @$smooth and $$smooth[$i] > $thrv;
+		last if $i == @$smooth;
+		my $j = $i + 1;
+		$j++ while $j < @$smooth and $$smooth[$j] <= $thrv;
+		push @parts, [$i, $j - 1];
+		last if $j == @$smooth;
+		$i = $j;
+	}
+	return @parts;
+}
+
+sub rolloff_attack ($+$) {
+	my ($i, $smooths, $thrv) = @_;
+	my $j = $i;
+	for my $s (reverse @$smooths) {
+		$i-- while $i > 0 and $$s[$i-1] < $$s[$i];
+		$j++ while $j < $#$s and $$s[$j+1] < $thrv;
+	}
+	my $d = $$smooths[0];
+	my $imin = $i;
+	my $vmin = $$d[$i];
+	for ($i++; $i <= $j; $i++) {
+		($imin, $vmin) = ($i, $$d[$i])
+			if $$d[$i] <= $vmin;
+	}
+	return $imin;
+}
+
+sub rolloff_release ($+$) {
+	my ($i, $smooths, $thrv) = @_;
+	my $j = $i;
+	for my $s (reverse @$smooths) {
+		$i++ while $i < $#$s and $$s[$i+1] < $$s[$i];
+		$j-- while $j > 0 and $$s[$j-1] < $thrv;
+	}
+	my $d = $$smooths[0];
+	my $imin = $i;
+	my $vmin = $$d[$i];
+	for ($i--; $i >= $j; $i--) {
+		($imin, $vmin) = ($i, $$d[$i])
+			if $$d[$i] <= $vmin;
+	}
+	return $imin;
+}
+
+sub rolloff (++$) {
+	my ($parts, $smooths, $thrv) = @_;
+	for my $part (@$parts) {
+		$$part[0] = rolloff_release $$part[0], $smooths, $thrv;
+		$$part[1] = rolloff_attack  $$part[1], $smooths, $thrv;
+	}
 }
 
 sub argmax (&+) {
@@ -125,32 +182,24 @@ use List::Util qw(max min);
 my $dmax = 0;
 my $dmin = -60;
 
-my @smooth;
+my $radius = 25;
+my @smooths;
 my @peaks;
 my ($thri, $thrp, $thrv);
+my @parts;
 sub mkdata {
-	@smooth = smooth @data;
-	@peaks = peaks @smooth;
+	$smooths[$radius] //= [smooth @data, $radius];
+	@peaks = peaks $smooths[$radius];
 	@peaks = sort_peaks @peaks;
 	(undef, $thrp) = argmax { $$_[2] } @peaks;
 	($thri, $thrv) = @$thrp[0,1];
+	@parts = intersect $smooths[$radius], $thrv;
+	$smooths[0] = \@data;
+	$smooths[$_] //= [smooth @data, $_] for 1..$radius-1;
+	my @ss = @smooths[0..$radius];
+	rolloff @parts, @ss, $thrv;
 }
 mkdata();
-
-sub mkparts {
-	my $i = 0;
-	my @parts;
-	while (1) {
-		$i++ while $i < @smooth and $smooth[$i] > $thrv;
-		last if $i == @smooth;
-		my $j = $i + 1;
-		$j++ while $j < @smooth and $smooth[$j] <= $thrv;
-		push @parts, [$i, $j - 1];
-		last if $j == @smooth;
-		$i = $j;
-	}
-	join "," => map { "$$_[0]-$$_[1]" } @parts;
-}
 
 use Gtk2 '-init';
 use Glib qw(TRUE FALSE);
@@ -173,7 +222,7 @@ sub key_press {
 		render();
 	}
 	elsif ($key == $KS{Return} or $key == $KS{KP_Enter}) {
-		say mkparts();
+		say join "," => map { "$$_[0]-$$_[1]" } @parts;
 		Gtk2->main_quit;
 		exit 0;
 	}
@@ -190,31 +239,62 @@ sub y2cr ($) {
 	HH - ($_[0] - $dmin) / ($dmax - $dmin) * HH - 0.5;
 }
 
+sub draw_part ($$$+) {
+	my ($cr, $i, $j, $color) = @_;
+	$cr->set_source_rgb(@$color);
+	$cr->move_to(i2cr $i, y2cr $data[$i]);
+	for ($i++; $i <= $j; $i++) {
+		$cr->line_to(i2cr $i, y2cr $data[$i]);
+	}
+	$cr->stroke;
+}
+
 our $surf;
 sub create_image {
 	$surf ||= Cairo::ImageSurface->create('argb32', $WW, HH);
 	my $cr = Cairo::Context->create($surf);
+	# clear
 	$cr->set_line_width(1);
 	$cr->set_source_rgb(1, 1, 1);
 	$cr->set_operator('source');
 	$cr->paint;
-	$cr->set_source_rgb(0.5, 0.5, 0.5);
+	# data bg
+	$cr->set_source_rgb(0.8, 0.8, 0.8);
 	$cr->move_to(0, HH);
 	for my $i (0 .. $#data) {
 		$cr->line_to(i2cr $i, y2cr $data[$i]);
 	}
 	$cr->line_to($WW, HH);
 	$cr->fill;
-	$cr->set_source_rgb(0, 0, 1);
-	for my $i (0 .. $#smooth) {
-		$cr->line_to(i2cr $i, y2cr $smooth[$i]);
-	}
-	$cr->stroke;
-	$cr->set_source_rgb(0, 1, 0);
+	# threshold
+	$cr->set_dash(1, 1, 1);
+	$cr->set_source_rgb(0, 0.8, 0);
 	$cr->move_to(  0, y2cr $thrv);
 	$cr->line_to($WW, y2cr $thrv);
 	$cr->stroke;
-	$cr->set_source_rgb(0, 0, 1);
+	$cr->set_dash(0);
+	# smooth outline
+	$cr->set_source_rgb(0, 0, 0.8);
+	$cr->move_to(0, HH);
+	for my $i (0 .. $#{$smooths[$radius]}) {
+		$cr->line_to(i2cr $i, y2cr $smooths[$radius][$i]);
+	}
+	$cr->stroke;
+	# parts
+	my $cm = [0.8, 0, 0];
+	my $cs = [0.1, 0.1, 0.1];
+	for (my $i = 0; $i < @parts; $i++) {
+		my $p = $parts[$i];
+		draw_part $cr, 0, $$p[0], $cs
+			if $i == 0 and $$p[0];
+		draw_part $cr, $$p[0], $$p[1], $cm;
+		last if $$p[1] == $#data;
+		my $q = $parts[$i+1];
+		my $qq = $q ? $$q[0] : $#data;
+		draw_part $cr, $$p[1], $qq, $cs;
+	}
+	# the peak
+	$cr->set_source_rgb(0, 0, 0.8);
 	for ($thrp) {
 		$cr->arc(i2cr $$_[0], y2cr $$_[1], 2, 0, 2 * 3.14);
 		$cr->fill;
