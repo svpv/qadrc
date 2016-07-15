@@ -43,11 +43,13 @@ sub smooth (+$) {
 	unpack "d*", $w;
 }
 
+use List::Util qw(min max);
+
 sub peaks (+) {
 	my $a = shift;
 	my $x0 = @$a[0];
 	my $rising = 0;
-	my @peaks;
+	my @peaks = [-0.5, 0.5 + min @$a];
 	for (my $i = 1; $i < @$a; $i++) {
 		my $x1 = $$a[$i];
 		if ($x1 > $x0) {
@@ -178,7 +180,6 @@ sub parse_ebur128_log {
 
 my @data = parse_ebur128_log;
 
-use List::Util qw(max min);
 my $dmax = 0;
 my $dmin = -60;
 
