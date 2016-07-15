@@ -18,6 +18,7 @@ MonoTry2()
 	g1peak=$rg1peak g1range=$eb1range g1rlow=$eb1rlow
 	q999=$(Calc2f "${gain:-${g1db:?}} + ${eb2S999:?}")
 	q99=$( Calc2f "${gain:-${g1db:?}} + ${eb2S99:?} ")
+	q10=$( Calc2f "${gain:-${g1db:?}} + ${eb2S10:?} ")
 }
 
 {
@@ -28,7 +29,7 @@ MonoTry2()
 
 	local g1db downmix=
 	local g1peak g1range g1rlow
-	local q999 q99 ismono=0
+	local q999 q99 q10 ismono=0 monoparts=
 
 	# left channel needs correction?
 	local c0db=0 c0afs= c0afm=
@@ -67,8 +68,9 @@ MonoTry2()
 	if [ $g0ch -gt 1 ]; then
 		q999=$(Calc2f "${gain:-${g1db:?}} + ${eb4S999:?}")
 		q99=$( Calc2f "${gain:-${g1db:?}} + ${eb4S99:?} ")
+		q10=$( Calc2f "${gain:-${g1db:?}} + ${eb4S10:?} ")
 
-		local save_vars='g1db rg1peak eb1range eb1rlow q999 q99'
+		local save_vars='g1db rg1peak eb1range eb1rlow q999 q99 q10'
 		c0db=$(Calc3f "($eb2gain - $eb3gain + $vd2mean - $vd1mean) / 2")
 		if [ $c0db != 0 ]; then
 			local c0w1 c0w2
@@ -79,6 +81,7 @@ MonoTry2()
 			for var in $save_vars; do
 				local save_$var=${!var}
 			done
+			mv $tmpdir/gain$$.log{,-}
 
 			MonoTry2 "$1"
 
@@ -88,6 +91,9 @@ MonoTry2()
 				for var in $save_vars; do
 					eval "$var=\$save_$var"
 				done
+				mv $tmpdir/gain$$.log{-,}
+			else
+				rm $tmpdir/gain$$.log-
 			fi
 		fi
 	fi
@@ -98,5 +104,7 @@ MonoTry2()
 		ismono=2
 	elif Cond "${q99:?} <= -20.56"; then
 		ismono=1
+	elif Cond "${q10:?} <= -30"; then
+		monoparts=$($av0dir/monoparts --gain=$g1db <$tmpdir/gain$$.log)
 	fi
 }

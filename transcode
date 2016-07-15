@@ -56,8 +56,13 @@ Transcode()
 			: ${c0afm:='pan=1c|c0=0.5*c0+0.5*c1'}
 			AF=${AF:+$AF,}${c0afm:?}
 		fi
-	elif [ ${c0db:?} != 0 ]; then
+	else
+		if [ ${c0db:?} != 0 ]; then
 			AF=${AF:+$AF,}${c0afs:?}
+		fi
+		if [ -n "$monoparts" ]; then
+			AF=${AF:+$AF,}monoparts=${monoparts//,/|}
+		fi
 	fi
 
 	local drc=
