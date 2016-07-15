@@ -171,14 +171,22 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
 	frame = copy;
     }
 
-    if (part == s->part1)
-	s->stereo2mono(frame);
+    if (part == s->part1) {
+	if (part == 0)
+	    s->full_mono(frame);
+	else
+	    s->stereo2mono(frame);
+    }
     else if (part < s->part2)
 	s->full_mono(frame);
     else if (part == s->part2) {
-	s->mono2stereo(frame);
-	// last part?
-	if (*s->parts == '\0')
+	bool smallframe = frame->nb_samples < inlink->min_samples;
+	bool lastpart = *s->parts == '\0';
+	if (smallframe && lastpart)
+	    s->full_mono(frame);
+	else
+	    s->mono2stereo(frame);
+	if (lastpart)
 	    s->part1 = s->part2 = INT_MAX;
 	else if (!scan_part(ctx))
 	    return AVERROR(EINVAL);
