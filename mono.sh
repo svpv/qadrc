@@ -80,7 +80,7 @@ MonoTry2()
 		q25=$( Calc2f "${gain:-${g1db:?}} + ${eb4S25:?} ")
 		q10=$( Calc2f "${gain:-${g1db:?}} + ${eb4S10:?} ")
 
-		local save_vars='g1db rg1peak eb1range eb1rlow q999 q99 q95 q90 q75 q50 q25 q10'
+		local save_vars='g1db g1peak g1range g1rlow q999 q99 q95 q90 q75 q50 q25 q10'
 		c0db=$(Calc2f "@diff = ($eb2gain - $eb3gain, $vd2mean - $vd1mean,
 					$eb3S99 - $eb2S99, $eb3S95 - $eb2S95,
 					$eb3S90 - $eb2S90, $eb3S75 - $eb2S75,
