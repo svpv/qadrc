@@ -105,6 +105,6 @@ MonoTry2()
 	elif Cond "${q99:?} <= -20.56"; then
 		ismono=1
 	elif Cond "${q10:?} <= -30"; then
-		monoparts=$($av0dir/monoparts --gain=$g1db <$tmpdir/gain$$.log)
+		monoparts=$($av0dir/monoparts --gain=$g1db ${ff_ss:+-ss $ff_ss} <$tmpdir/gain$$.log)
 	fi
 }

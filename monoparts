@@ -157,7 +157,7 @@ sub argmax (&+) {
 }
 
 use Getopt::Long qw(GetOptions);
-GetOptions "gain=f" => \my $gain
+GetOptions "gain=f" => \my $gain, "ss=s" => \my $ss
 	or die "GetOptions failed";
 
 sub lufs {
@@ -211,6 +211,23 @@ sub mkdata {
 }
 mkdata();
 
+sub offset {
+	my @s = reverse split /:/, $ss;
+	my $s = $s[0] + 60 * $s[1] + 3600 * $s[2];
+	return int $s * 10 - 7;
+}
+
+sub answer {
+	my $off = offset;
+	join "," => map {
+		my ($p1, $p2) = @$_;
+		$p1 += $off - ($p1 == 0);
+		$p1 = 0 if $p1 < 0;
+		$p2 += $off + ($p2 == $#data) * 8;
+		"$p1-$p2"
+	} @parts;
+}
+
 use Gtk2 '-init';
 use Glib qw(TRUE FALSE);
 
@@ -232,7 +249,7 @@ sub key_press {
 		render();
 	}
 	elsif ($key == $KS{Return} or $key == $KS{KP_Enter}) {
-		say join "," => map { "$$_[0]-$$_[1]" } @parts;
+		say answer;
 		Gtk2->main_quit;
 		exit 0;
 	}
