@@ -13,8 +13,8 @@ INIT {
 }
 
 our $B;
-if (/^Input #/../^Output #/ and /^\s*Duration: .*(, bitrate.+)/) {
-	$B = $1;
+if (/^Input #/../^Output #/ and /^\s*Duration: /) {
+	$B = $_;
 }
 
 our %A;
@@ -33,6 +33,7 @@ if (/^Stream mapping/../^Press/ and /^\s*Stream #(\d[:.]\d) -> /) {
 	say "${P}g0codec=$1" if /(\w+)/;
 	say "${P}g0srate=$1" if /\b([1-9]\d{4}) Hz\b/;
 	say "${P}g0brate=$1" if /\b([1-9]\d{1,3}) kb/;
+	say "${P}g0dura=$1"  if /Duration: ([\d:.]+)/;
 	$ch =  1 if /\bmono\b/;
 	$ch =  2 if /\bstereo\b/;
 	$ch =  5 if /, 5\.1\b/;
