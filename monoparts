@@ -195,21 +195,24 @@ my $dmin = -60;
 my $radius = 25;
 my @smooths;
 my @peaks;
-my ($thri, $thrp, $thrv);
+my ($peaki, $thrp, $thrv);
 my @parts;
-sub mkdata {
+sub mkdata1 {
 	$smooths[$radius] //= [smooth @data, $radius];
 	@peaks = peaks $smooths[$radius];
 	@peaks = sort_peaks @peaks;
-	(undef, $thrp) = argmax { $$_[2] } @peaks;
-	($thri, $thrv) = @$thrp[0,1];
+	$peaki = argmax { $$_[2] } @peaks;
+}
+sub mkdata2 {
+	$thrp = $peaks[$peaki];
+	$thrv = $$thrp[1];
 	@parts = intersect $smooths[$radius], $thrv;
 	$smooths[0] = \@data;
 	$smooths[$_] //= [smooth @data, $_] for 1..$radius-1;
 	my @ss = @smooths[0..$radius];
 	rolloff @parts, @ss, $thrv;
 }
-mkdata();
+mkdata1; mkdata2;
 
 sub offset {
 	my @s = reverse split /:/, $ss;
@@ -238,17 +241,28 @@ require Gtk2::Gdk::Keysyms;
 sub key_press {
 	my ($widget, $event) = @_;
 	my $key = $event->keyval;
-	if    ($key == $KS{Up}) {
+	my $ctrl = $event->state & 'control-mask';
+	if    ($ctrl and $key == $KS{Up}) {
 		$radius++;
-		mkdata();
+		mkdata1; mkdata2;
+		render();
+	}
+	elsif ($ctrl and $key == $KS{Down}) {
+		$radius-- if $radius > 1;
+		mkdata1; mkdata2;
+		render();
+	}
+	elsif ($key == $KS{Up}) {
+		$peaki-- if $peaki > 0;
+		mkdata2;
 		render();
 	}
 	elsif ($key == $KS{Down}) {
-		$radius-- if $radius > 1;
-		mkdata();
+		$peaki++ if $peaki < $#peaks;
+		mkdata2;
 		render();
 	}
-	elsif ($key == $KS{Return} or $key == $KS{KP_Enter}) {
+	elsif ($ctrl and ($key == $KS{Return} or $key == $KS{KP_Enter})) {
 		say answer;
 		Gtk2->main_quit;
 		exit 0;
