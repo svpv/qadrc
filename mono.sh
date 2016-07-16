@@ -18,6 +18,11 @@ MonoTry2()
 	g1peak=$rg1peak g1range=$eb1range g1rlow=$eb1rlow
 	q999=$(Calc2f "${gain:-${g1db:?}} + ${eb2S999:?}")
 	q99=$( Calc2f "${gain:-${g1db:?}} + ${eb2S99:?} ")
+	q95=$( Calc2f "${gain:-${g1db:?}} + ${eb2S95:?} ")
+	q90=$( Calc2f "${gain:-${g1db:?}} + ${eb2S90:?} ")
+	q75=$( Calc2f "${gain:-${g1db:?}} + ${eb2S75:?} ")
+	q50=$( Calc2f "${gain:-${g1db:?}} + ${eb2S50:?} ")
+	q25=$( Calc2f "${gain:-${g1db:?}} + ${eb2S25:?} ")
 	q10=$( Calc2f "${gain:-${g1db:?}} + ${eb2S10:?} ")
 }
 
@@ -29,7 +34,7 @@ MonoTry2()
 
 	local g1db downmix=
 	local g1peak g1range g1rlow
-	local q999 q99 q10 ismono=0 monoparts=
+	local q999 q99 q95 q90 q75 q50 q25 q10 ismono=0 monoparts=
 
 	# left channel needs correction?
 	local c0db=0 c0afs= c0afm=
@@ -37,8 +42,8 @@ MonoTry2()
 	ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
 		-af "replaygain,asplit=3[i1][i2][i3];
 		[i1]ebur128=framelog=verbose,
-		    pan=1c|c0=c0,volumedetect,ebur128=framelog=verbose[o1];
-		[i2]pan=1c|c0=c1,volumedetect,ebur128=framelog=verbose[o2];
+		    pan=1c|c0=c0,volumedetect,ebur128[o1];
+		[i2]pan=1c|c0=c1,volumedetect,ebur128[o2];
 		[i3]pan=1c|c0=0.5*c0+-0.5*c1,volumedetect,ebur128[o3];
 		[o1][o2][o3]amix=3" \
 		-f null - >$tmpdir/gain$$.log 2>&1 || { grep -i error $tmpdir/gain$$.log; false; }
@@ -68,10 +73,22 @@ MonoTry2()
 	if [ $g0ch -gt 1 ]; then
 		q999=$(Calc2f "${gain:-${g1db:?}} + ${eb4S999:?}")
 		q99=$( Calc2f "${gain:-${g1db:?}} + ${eb4S99:?} ")
+		q95=$( Calc2f "${gain:-${g1db:?}} + ${eb4S95:?} ")
+		q90=$( Calc2f "${gain:-${g1db:?}} + ${eb4S90:?} ")
+		q75=$( Calc2f "${gain:-${g1db:?}} + ${eb4S75:?} ")
+		q50=$( Calc2f "${gain:-${g1db:?}} + ${eb4S50:?} ")
+		q25=$( Calc2f "${gain:-${g1db:?}} + ${eb4S25:?} ")
 		q10=$( Calc2f "${gain:-${g1db:?}} + ${eb4S10:?} ")
 
-		local save_vars='g1db rg1peak eb1range eb1rlow q999 q99 q10'
-		c0db=$(Calc3f "($eb2gain - $eb3gain + $vd2mean - $vd1mean) / 2")
+		local save_vars='g1db rg1peak eb1range eb1rlow q999 q99 q95 q90 q75 q50 q25 q10'
+		c0db=$(Calc2f "@diff = ($eb2gain - $eb3gain, $vd2mean - $vd1mean,
+					$eb3S99 - $eb2S99, $eb3S95 - $eb2S95,
+					$eb3S90 - $eb2S90, $eb3S75 - $eb2S75,
+					$eb3S50 - $eb2S50, $eb3S25 - $eb2S25,
+					$eb3S10 - $eb2S10);"'
+				use List::Util qw(all max min);
+				(all { $_ > 0 } @diff) ? min @diff :
+				(all { $_ < 0 } @diff) ? max @diff : 0')
 		if [ $c0db != 0 ]; then
 			local c0w1 c0w2
 			c0w1=$(Calc6f "1.0*10**(0.05*$c0db)")
@@ -86,7 +103,14 @@ MonoTry2()
 			MonoTry2 "$1"
 
 			# did left channel correction actually reduce the difference?
-			if Cond "$q99 >= ${save_q99:?}"; then
+			if Cond "@changes =  (  [ $q99, $save_q99], [ $q95, $save_q95 ],
+						[ $q90, $save_q90], [ $q75, $save_q75 ],
+						[ $q50, $save_q50], [ $q25, $save_q25 ],
+						[ $q10, $save_q10] );"'
+				 use List::Util qw(any all);
+				 any { $$_[0] >  $$_[1] } @changes or
+				 all { $$_[0] == $$_[1] } @changes'
+			then
 				c0db=0 c0afs= c0afm=
 				for var in $save_vars; do
 					eval "$var=\$save_$var"
