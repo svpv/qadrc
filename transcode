@@ -59,6 +59,13 @@ Transcode()
 		fi
 	fi
 
+	if [[ $VBR$vbr = 3 && $2 = *.[Mm][Pp]3 ]]; then
+		vbr=3$(zenity --title VBR \
+			--text $'Select VBR for\n'"$2" \
+			--column VBR --list V4 V3) ||:
+		vbr=${vbr#3V}
+	fi
+
 	# -af chain
 	local AF=${downmix:+$downmix,}
 
