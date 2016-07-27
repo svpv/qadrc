@@ -234,6 +234,23 @@ sub answer {
 use Gtk2 '-init';
 use Glib qw(TRUE FALSE);
 
+sub all_mono {
+	say 'all-mono';
+	Gtk2->main_quit;
+	exit 0;
+}
+
+sub all_stereo {
+	Gtk2->main_quit;
+	exit 0;
+}
+
+sub all_ok {
+	say answer;
+	Gtk2->main_quit;
+	exit 0;
+}
+
 our %KS;
 require Gtk2::Gdk::Keysyms;
 *KS = \%Gtk2::Gdk::Keysyms;
@@ -263,9 +280,7 @@ sub key_press {
 		render();
 	}
 	elsif ($ctrl and ($key == $KS{Return} or $key == $KS{KP_Enter})) {
-		say answer;
-		Gtk2->main_quit;
-		exit 0;
+		all_ok;
 	}
 }
 
@@ -362,11 +377,9 @@ sub render {
 	expose($draw, '', $surf);
 }
 
-my $win = Gtk2::Window->new;
-$win->signal_connect('delete_event' => sub { Gtk2->main_quit });
-$win->signal_connect('key-press-event' => \&key_press);
+my $vbox = Gtk2::VBox->new;
 if ($WW <= 1200) {
-	$win->add($draw);
+	$vbox->add($draw);
 }
 else {
 	my $scroll = Gtk2::ScrolledWindow->new;
@@ -374,7 +387,25 @@ else {
 	$scroll->set_policy('always', 'never');
 	$draw->set_size_request(-1, HH);
 	$scroll->set_size_request(1200, -1);
-	$win->add($scroll);
+	$vbox->add($scroll);
 }
+
+my $hbox = Gtk2::HBox->new;
+$vbox->add($hbox);
+my $bmono = Gtk2::Button->new("All mono");
+my $bstereo = Gtk2::Button->new("All stereo");
+my $bok = Gtk2::Button->new("OK");
+$bmono->signal_connect(clicked => \&all_mono);
+$bstereo->signal_connect(clicked => \&all_stereo);
+$bok->signal_connect(clicked => \&all_ok);
+$hbox->add($bmono);
+$hbox->add($bstereo);
+$hbox->add(Gtk2::VSeparator->new);
+$hbox->add($bok);
+
+my $win = Gtk2::Window->new;
+$win->signal_connect('delete_event' => sub { Gtk2->main_quit });
+$win->signal_connect('key-press-event' => \&key_press);
+$win->add($vbox);
 $win->show_all;
 Gtk2->main;
