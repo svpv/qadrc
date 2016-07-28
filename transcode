@@ -48,14 +48,20 @@ Transcode()
 	local vbr=4 tvbr=82
 	[ ${g0brate:?} -lt 180 ] || vbr=3 tvbr=91
 
-	if [ ${ismono:?} -gt 0 ]; then
+	if [ ${ismono:?} -ge 2 ]; then
 		vbr=4
-	elif [ -n "$monoparts" ]; then
-		local dura durap
-		dura=$(tc2ms ${g0dura:?})
-		durap=$(Calc "-(${monoparts//,/+})*100")
-		if Cond "$durap > 0.75 * $dura"; then
-			vbr=4
+	else
+		ismono=0
+		monoparts=$($av0dir/monoparts --gain=$g1db ${ff_ss:+-ss $ff_ss} <$tmpdir/gain$$.log)
+		if [ "$monoparts" = 'all-mono' ]; then
+			ismono=9 vbr=4
+		elif [ -n "$monoparts" ]; then
+			local dura durap
+			dura=$(tc2ms ${g0dura:?})
+			durap=$(Calc "-(${monoparts//,/+})*100")
+			if Cond "$durap > 0.75 * $dura"; then
+				vbr=4
+			fi
 		fi
 	fi
 
