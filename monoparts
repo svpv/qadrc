@@ -140,6 +140,7 @@ sub rolloff (++$) {
 		$$part[1] = rolloff_attack  $$part[1], $smooths, $thrv
 			unless $part == $$parts[-1] and $$part[1] == $#{$$smooths[-1]};
 	}
+	@$parts = grep { $$_[1] - $$_[0] > 10 } @$parts;
 }
 
 sub argmax (&+) {
