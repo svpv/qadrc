@@ -9,7 +9,7 @@
 +OBJS-$(CONFIG_MYDRC_FILTER)                  += af_mydrc.o
 +OBJS-$(CONFIG_MONOPARTS_FILTER)              += af_monoparts.o
 +libavfilter/af_qadrc.o libavfilter/af_qalimiter.o libavfilter/af_mydrc.o libavfilter/af_monoparts.o: \
-+CFLAGS += -g -ffast-math -ftree-vectorize -fopt-info-vec -Wno-vla -Wno-declaration-after-statement
++CFLAGS += -g -ffast-math -ftree-vectorize -fopt-info-vec -Wno-declaration-after-statement
  OBJS-$(CONFIG_REPLAYGAIN_FILTER)             += af_replaygain.o
  OBJS-$(CONFIG_RESAMPLE_FILTER)               += af_resample.o
  OBJS-$(CONFIG_SIDECHAINCOMPRESS_FILTER)      += af_sidechaincompress.o

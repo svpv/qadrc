@@ -43,6 +43,8 @@ typedef struct QADRCContext {
     AVFrame **frames;
     size_t nframes;
     size_t fpos;
+
+    float *abuf;
     float lasta;
 } QADRCContext;
 
@@ -320,7 +322,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     int nsamples = frame->nb_samples;
     unsigned nc = inlink->channels;
 
-    float a[nsamples];
+    float *a = s->abuf = av_realloc_f(s->abuf, nsamples, sizeof(float));
     int fmt = outlink->format | (nc <= 2 ? nc << 8 : 0);
 
     chew(s, frame, fmt, nc, a);
@@ -340,7 +342,7 @@ static int final_flush(AVFilterLink *inlink, AVFilterContext *ctx, QADRCContext 
     size_t nsamples = f0->nb_samples - s->fpos;
     unsigned nc = inlink->channels;
 
-    float a[nsamples];
+    float *a = s->abuf = av_realloc_f(s->abuf, nsamples, sizeof(float));
     int fmt = outlink->format | (nc <= 2 ? nc << 8 : 0);
 
     for (size_t i = 0; i < nsamples; i++)
@@ -367,6 +369,7 @@ static av_cold void uninit(AVFilterContext *ctx)
     for (int i = 0; i < s->nframes; i++)
 	av_frame_free(&s->frames[i]);
     av_freep(&s->frames);
+    av_freep(&s->abuf);
 }
 
 static int query_formats(AVFilterContext *ctx)
