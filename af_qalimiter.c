@@ -32,18 +32,18 @@ static void fix_spike1(AVFilterLink *inlink, AVFrame **frames, int ch,
     peak = fabsf(peak);
 
     for (int fi = fi1; fi <= fi2; fi++) {
-	AVFrame *frame = frames[fi], *out_frame;
-	if (av_frame_is_writable(frame))
-	    out_frame = frame;
-	else {
-	    out_frame = ff_get_audio_buffer(inlink, frame->nb_samples);
-	    av_frame_copy_props(out_frame, frame);
-	    av_frame_copy(out_frame, frame);
+	AVFrame *frame = frames[fi];
+	if (!av_frame_is_writable(frame)) {
+	    AVFrame *copy = ff_get_audio_buffer(inlink, frame->nb_samples);
+	    av_frame_copy_props(copy, frame);
+	    av_frame_copy(copy, frame);
+	    av_frame_free(&frame);
+	    frame = frames[fi] = copy;
         }
 
 	size_t begin = (fi == fi1) ? f1_pos : 0;
 	size_t end = (fi == fi2) ? f2_end : frame->nb_samples;
-	float *x = (float *) out_frame->extended_data[ch];
+	float *x = (float *) frame->extended_data[ch];
 
 	if (peak < m_thresh * 2.0) {
 	    float a = (peak - m_thresh) / (peak * peak);
@@ -59,11 +59,6 @@ static void fix_spike1(AVFilterLink *inlink, AVFrame **frames, int ch,
 		b *= -1.0;
 	    for (size_t i = begin; i < end; ++i)
 		x[i] = x[i] + b * x[i] * x[i] + a * x[i] * x[i] * x[i];
-	}
-
-	if (out_frame != frame) {
-	    av_frame_free(&frame);
-	    frames[fi] = out_frame;
 	}
     }
 }
