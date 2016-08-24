@@ -19,7 +19,7 @@ Calc5f() { perl -E "say 0 + sprintf '%.5f', do { $* }"; }
 Calc6f() { perl -E "say 0 + sprintf '%.6f', do { $* }"; }
 Calc7f() { perl -E "say 0 + sprintf '%.7f', do { $* }"; }
 Calc8f() { perl -E "say 0 + sprintf '%.8f', do { $* }"; }
-Calc0f() { perl -E "say 0 + sprintf '%.9f', do { $* }"; }
+Calc9f() { perl -E "say 0 + sprintf '%.9f', do { $* }"; }
 
 Cond()
 {
