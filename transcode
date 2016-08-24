@@ -102,7 +102,9 @@ Transcode()
 			say "ratio=$ratio thresh=$thresh knee=$knee";
 			' -- $g1range $g1rlow $drc_range)
 		local $vars
-		drc="asplit[i1][i2];[i1]qadrc=$(($thresh+2)):$ratio:$knee[o1];[i2]mydrc=$(($thresh-1)):$ratio:$knee[o2];[o1][o2]amix"
+		qadrc="$(($thresh+2)):$ratio:$knee:volume=$(Calc0f "-10 - ${g1db:?}")"
+		mydrc="$(($thresh-1)):$ratio:$knee"
+		drc="asplit[i1][i2];[i1]qadrc=$qadrc[o1];[i2]mydrc=$mydrc[o2];[o1][o2]amix"
 		AF=${AF:+$AF,}$drc
 
 		ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
