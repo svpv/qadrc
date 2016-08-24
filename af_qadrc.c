@@ -128,7 +128,9 @@ static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a
 {
     float **data = (float **) frame->extended_data;
     const int nsamples = frame->nb_samples;
-    // calculate peak level
+    /* We need to calculate peak level (xL, max among channels) and turn it
+     * into dB (xG).  Unless the whole loop is vectorizable, the last step,
+     * xL -> xG conversion, will be executed in a separate pass. */
     switch (fmt) {
     case AV_SAMPLE_FMT_FLT  | 1 << 8:
     case AV_SAMPLE_FMT_FLTP | 1 << 8:
@@ -194,7 +196,9 @@ static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a
 	}
     }
 
-    // non-vectorizable
+    /* As we apply downward compression to xG and smooth the result, we get cG,
+     * a coefficient (though in dB just yet) which will be applied to an earlier
+     * sample, because of the delay.  This part is not vectorizable. */
     for (size_t i = 0; i < nsamples; ++i) {
 	double xG = a[i];
 	double yG = computeGain(s, xG);
@@ -205,6 +209,9 @@ static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a
 
 static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, size_t n)
 {
+    /* We now have dB coefficients which we need to convert to linear domain,
+     * cG -> cL, and apply to the data.  Again, both steps are combined
+     * in a single loop if the whole loop is vectorizable. */
     switch (fmt) {
     case AV_SAMPLE_FMT_FLT  | 1 << 8:
     case AV_SAMPLE_FMT_FLTP | 1 << 8:
