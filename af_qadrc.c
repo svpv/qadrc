@@ -361,6 +361,14 @@ static int request_frame(AVFilterLink *outlink)
     return ret;
 }
 
+static av_cold void uninit(AVFilterContext *ctx)
+{
+    QADRCContext *s = ctx->priv;
+    for (int i = 0; i < s->nframes; i++)
+	av_frame_free(&s->frames[i]);
+    av_freep(&s->frames);
+}
+
 static int query_formats(AVFilterContext *ctx)
 {
     AVFilterFormats *formats = NULL;
@@ -432,6 +440,7 @@ static const AVFilterPad outputs[] = {
 AVFilter ff_af_qadrc = {
     .name	  = "qadrc",
     .description   = NULL_IF_CONFIG_SMALL("qaac dynamic range compressor"),
+    .uninit        = uninit,
     .query_formats = query_formats,
     .inputs	= inputs,
     .outputs       = outputs,
