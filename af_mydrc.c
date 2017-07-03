@@ -67,6 +67,10 @@ typedef struct MyDRCContext {
     double hi_x[8];
     double hi_y[8];
     bool hi_once;
+
+    // waveform
+    const char *wf_fname;
+    FILE *wf_fp;
 } MyDRCContext;
 
 #define OFFSET(x) offsetof(MyDRCContext, x)
@@ -79,6 +83,7 @@ static const AVOption mydrc_options[] = {
     { "f", "set the frame length in msec",     OFFSET(frame_len_msec),    AV_OPT_TYPE_INT,    {.i64 = 500},   10,  8000, FLAGS },
     { "g", "set the gaussian filter size",     OFFSET(filter_size),       AV_OPT_TYPE_INT,    {.i64 = 31},     3,   301, FLAGS },
     { "min", "set the min filter size",        OFFSET(min_size),          AV_OPT_TYPE_INT,    {.i64 =  3},     3,   301, FLAGS },
+    { "wf", "write a waveform file",           OFFSET(wf_fname),          AV_OPT_TYPE_STRING, {.str = NULL},   0,     0, FLAGS },
     { NULL }
 };
 
@@ -96,6 +101,16 @@ static av_cold int init(AVFilterContext *ctx)
     if (!(s->min_size & 1)) {
         av_log(ctx, AV_LOG_ERROR, "min size %d is invalid. Must be an odd value.\n", s->min_size);
         return AVERROR(EINVAL);
+    }
+
+    if (s->wf_fname) {
+	s->wf_fp = fopen(s->wf_fname, "w");
+	if (!s->wf_fp) {
+	    av_log(ctx, AV_LOG_ERROR, "cannot open %s\n", s->wf_fname);
+	    return AVERROR(EINVAL);
+	}
+	fwrite("WF1", 4, 1, s->wf_fp);
+	fwrite("\0\0\0", 4, 1, s->wf_fp);
     }
 
     return 0;
@@ -459,6 +474,16 @@ static void amplify_frame(MyDRCContext *s, AVFrame *frame)
     if (s->prev_amplification_factor == 0)
 	s->prev_amplification_factor = current_amplification_factor;
 
+    int cnt = 0;
+    int cnt_max = 0;
+    double sum = 0;
+    if (s->wf_fp) {
+	// apicker waveform uses 10 ms intervals
+	cnt_max = s->frame_len * 10 / s->frame_len_msec;
+	// need a whole number of 10 ms intervals in a frame
+	av_assert0(cnt_max * s->frame_len_msec / 10 == s->frame_len);
+    }
+
     for (int i = 0; i < frame->nb_samples; i++) {
 	double amplification_factor = fade(s->prev_amplification_factor,
 					   current_amplification_factor, i,
@@ -467,18 +492,18 @@ static void amplify_frame(MyDRCContext *s, AVFrame *frame)
             float *dst_ptr = (float *)frame->extended_data[c];
             dst_ptr[i] *= amplification_factor;
         }
-#if 0
-	static int cnt;
-	static double sum;
-	sum += amplification_factor;
-	if (++cnt == 480) {
-	    fprintf(stderr, "\ncL=%f\n", sum / 480);
-	    sum = 0;
-	    cnt = 0;
-	}
-#endif
 
+	if (s->wf_fp) {
+	    sum += amplification_factor;
+	    if (++cnt == cnt_max) {
+		unsigned char c = sum / cnt * 255 + 0.5;
+		putc_unlocked(c, s->wf_fp);
+		sum = 0;
+		cnt = 0;
+	    }
+	}
     }
+
     s->prev_amplification_factor = current_amplification_factor;
 }
 
