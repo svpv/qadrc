@@ -36,7 +36,6 @@ typedef struct MyDRCContext {
     struct FFBufQueue queue;
 
     int frame_len;
-    int frame_len_msec;
     int min_size;
     int filter_size;
 
@@ -80,7 +79,6 @@ static const AVOption mydrc_options[] = {
     { "thresh", "threshold", OFFSET(thresh), AV_OPT_TYPE_DOUBLE, {.dbl = -35}, -70, 0, FLAGS },
     { "ratio", "compression ratio", OFFSET(ratio), AV_OPT_TYPE_DOUBLE, {.dbl = 1.5}, 1, 100, FLAGS },
     { "knee", "knee width", OFFSET(knee), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 70, FLAGS },
-    { "f", "set the frame length in msec",     OFFSET(frame_len_msec),    AV_OPT_TYPE_INT,    {.i64 = 500},   10,  8000, FLAGS },
     { "g", "set the gaussian filter size",     OFFSET(filter_size),       AV_OPT_TYPE_INT,    {.i64 = 31},     3,   301, FLAGS },
     { "min", "set the min filter size",        OFFSET(min_size),          AV_OPT_TYPE_INT,    {.i64 =  3},     3,   301, FLAGS },
     { "wf", "write a waveform file",           OFFSET(wf_fname),          AV_OPT_TYPE_STRING, {.str = NULL},   0,     0, FLAGS },
@@ -146,10 +144,9 @@ static int query_formats(AVFilterContext *ctx)
     return ff_set_common_samplerates(ctx, formats);
 }
 
-static inline int frame_size(int sample_rate, int frame_len_msec)
+static inline int frame_size(int sample_rate)
 {
-    const int frame_size = round((double)sample_rate * (frame_len_msec / 1000.0));
-    return frame_size + (frame_size % 2);
+    return sample_rate / 10.0 + 0.5; // 100 msec
 }
 
 static void precalculate_fade_factors(double *fade_factors[2], int frame_len)
@@ -289,7 +286,7 @@ static int config_input(AVFilterLink *inlink)
     s->frame_len =
     inlink->min_samples =
     inlink->max_samples =
-    inlink->partial_buf_size = frame_size(inlink->sample_rate, s->frame_len_msec);
+    inlink->partial_buf_size = frame_size(inlink->sample_rate);
     av_log(ctx, AV_LOG_DEBUG, "frame len %d\n", s->frame_len);
 
     s->fade_factors[0] = av_malloc(s->frame_len * sizeof(*s->fade_factors[0]));
@@ -471,9 +468,9 @@ static void amplify_frame(MyDRCContext *s, AVFrame *frame)
     double sum = 0;
     if (s->wf_fp) {
 	// apicker waveform uses 10 ms intervals
-	cnt_max = s->frame_len * 10 / s->frame_len_msec;
+	cnt_max = s->frame_len / 10;
 	// need a whole number of 10 ms intervals in a frame
-	av_assert0(cnt_max * s->frame_len_msec / 10 == s->frame_len);
+	av_assert0(cnt_max * 10 == s->frame_len);
     }
 
     for (int i = 0; i < frame->nb_samples; i++) {
