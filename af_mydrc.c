@@ -387,6 +387,7 @@ static bool update_cqueue(cqueue *q, double val)
 {
     int qn = cqueue_size(q);
     int filter_size = q->size;
+    // Normally, we just pop the oldest element and push the new one.
     if (qn == filter_size) {
 	cqueue_pop(q);
 	cqueue_enqueue(q, val);
@@ -395,18 +396,35 @@ static bool update_cqueue(cqueue *q, double val)
 
     av_assert0(qn < filter_size);
 
+    // First-time push: pad with the preceding virtual elements,
+    // e.g. [0] and [1] for n=5, before adding the middle element [2].
+    //
+    // The even case (e.g. n=4) is special, and is designed to assist 400 ms
+    // RMS averaging.  When the 4th 100 ms element is queued, it should produce
+    // the second RMS element.  This requires one preceding virtual element.
+    //
+    //     100 ms input      [0]        [1]           [2]           [3]
+    //     queue          [0][0]  [0][0][1]  [2][0][1][2]  [3][0][1][2]
+    //     400 ms RMS      ^                 [0]           [1]
+    //                     |
+    //                     `- this will be mirrored with [2], see below
+    //
+    // This makes sense, because the RMS level of [0][1][2][3] should take
+    // its full effect at the end of the [1] input frame.
     if (qn == 0) {
-	for (int i = 0; i < filter_size / 2 + 1; i++)
+	for (int i = 0; i < (filter_size - 1) / 2 + 1; i++)
 	    cqueue_enqueue(q, val);
 	return false;
     }
 
+    // More elements until the queue is full.
     cqueue_enqueue(q, val);
     if (++qn < filter_size)
 	return false;
 
-    // mirror
-    for (int i = 0; i < filter_size / 2; i++)
+    // The queue is full for the first time.
+    // Mirror elements, e.g. [4] and [3] into [0] and [1].
+    for (int i = 0; i < (filter_size - 1) / 2; i++)
 	*cqueue_peekp(q, i) = cqueue_peek(q, filter_size - i - 1);
     return true;
 }
