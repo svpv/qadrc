@@ -362,14 +362,6 @@ static int query_formats(AVFilterContext *ctx)
     return 0;
 }
 
-#ifdef FF_LINK_FLAG_REQUEST_LOOP
-static int config_output(AVFilterLink *outlink)
-{
-    outlink->flags |= FF_LINK_FLAG_REQUEST_LOOP;
-    return 0;
-}
-#endif
-
 static const AVFilterPad inputs[] = {
     {
         .name          = "default",
@@ -383,9 +375,6 @@ static const AVFilterPad outputs[] = {
     {
         .name          = "default",
         .type          = AVMEDIA_TYPE_AUDIO,
-#ifdef FF_LINK_FLAG_REQUEST_LOOP
-        .config_props  = config_output,
-#endif
         .request_frame = request_frame,
     },
     { NULL }
