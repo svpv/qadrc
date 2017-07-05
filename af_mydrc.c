@@ -39,16 +39,24 @@ typedef struct MyDRCContext {
     int min_size;
     int filter_size;
 
+    double prev_rms_sum;
     double prev_amplification_factor;
     double *fade_factors[2];
     double *weights;
 
+    // For each 100 ms input frame, its (partial) RMS sum is first computed.
+    // It then undergoes the three stages of filtering, until the final gain
+    // is known and applied to the frame:
+    // 1) 400 ms RMS out of 4 partial sums is computed; these 400 ms intervals
+    // are overlapping, as per EBU R128 (and so the data from 4 frames should
+    // take its full effect at the end of the second frame).
+    // 2) For each RMS value, the gain is computed, and the minimum is taken
+    // among a few adjacent gain values. (This is to cope better with short and
+    // sudden bursts.)
+    // 3) The resulting gain curve is smoothed with the Gaussian filter.
+    cqueue *gain_rms;
     cqueue *gain_min;
     cqueue *gain_smooth;
-
-    bool flush_once;
-    double *flush_buf;
-    int flush_ix;
 
     // gain computer
     double thresh;
@@ -289,11 +297,17 @@ static int config_input(AVFilterLink *inlink)
     inlink->partial_buf_size = frame_size(inlink->sample_rate);
     av_log(ctx, AV_LOG_DEBUG, "frame len %d\n", s->frame_len);
 
+    s->prev_rms_sum = -1;
+
     s->fade_factors[0] = av_malloc(s->frame_len * sizeof(*s->fade_factors[0]));
     s->fade_factors[1] = av_malloc(s->frame_len * sizeof(*s->fade_factors[1]));
     s->weights = av_malloc(s->filter_size * sizeof(*s->weights));
     if (!s->fade_factors[0] || !s->fade_factors[1] || !s->weights)
         return AVERROR(ENOMEM);
+
+    s->gain_rms = cqueue_create(4); // 400 ms
+    if (!s->gain_rms)
+	return AVERROR(ENOMEM);
 
     s->gain_min = cqueue_create(s->min_size);
     if (!s->gain_min)
@@ -335,7 +349,7 @@ static double rms_sum(MyDRCContext *s, float *data, int c, int ns)
     return sum;
 }
 
-static double get_frame_rms_dB(MyDRCContext *s, AVFrame *frame)
+static double get_frame_rms_sum(MyDRCContext *s, AVFrame *frame)
 {
     int nc = av_frame_get_channels(frame);
 
@@ -349,7 +363,28 @@ static double get_frame_rms_dB(MyDRCContext *s, AVFrame *frame)
     for (int c = 0; c < nc; c++)
 	sum += rms_sum(s, frame->extended_data[c], c, frame->nb_samples);
 
-    double mean = FFMAX(sum / frame->nb_samples, DBL_EPSILON);
+    if (frame->nb_samples == s->frame_len)
+	s->prev_rms_sum = sum;
+    else {
+	// resacle the last small frame
+	sum = sum * s->frame_len / frame->nb_samples;
+	// average with the previous frame
+	int missing = s->frame_len - frame->nb_samples;
+	av_assert0(missing > 0);
+	if (s->prev_rms_sum >= 0)
+	    sum = (frame->nb_samples * sum + missing * s->prev_rms_sum) / s->frame_len;
+    }
+    return sum;
+}
+
+static double rms_filter(cqueue *q, int frame_len)
+{
+    double sum = 0.0;
+    int qn = cqueue_size(q);
+    for (int i = 0; i < qn; i++)
+        sum += cqueue_peek(q, i);
+    double mean = FFMAX(sum / (qn * frame_len), DBL_EPSILON);
+    // 10*log10 instead of 20*log10 amounts for sqrt
     return 10 * log10(mean);
 }
 
@@ -429,16 +464,6 @@ static bool update_cqueue(cqueue *q, double val)
     return true;
 }
 
-static bool update_gain_history(MyDRCContext *s, double current_gain_dB)
-{
-    bool ret = update_cqueue(s->gain_min, current_gain_dB);
-    if (ret) {
-	double min = min_filter(s->gain_min);
-	ret = update_cqueue(s->gain_smooth, min);
-    }
-    return ret;
-}
-
 static inline double dB_to_scale(double dB)
 {
     return pow(10, 0.05 * dB);
@@ -466,18 +491,31 @@ static double compute_gain(MyDRCContext *s, double x)
     }
 }
 
-static bool analyze_frame(MyDRCContext *s, AVFrame *frame)
+static bool push_rms_sum(MyDRCContext *s, double sum)
 {
-    const double vol_dB = get_frame_rms_dB(s, frame);
-    const double gain_dB = compute_gain(s, vol_dB);
-    return update_gain_history(s, gain_dB);
+    bool ret = update_cqueue(s->gain_rms, sum);
+    if (ret) {
+	double vol_dB = rms_filter(s->gain_rms, s->frame_len);
+	double gain_dB = compute_gain(s, vol_dB);
+	ret = update_cqueue(s->gain_min, gain_dB);
+	if (ret) {
+	    double min = min_filter(s->gain_min);
+	    ret = update_cqueue(s->gain_smooth, min);
+	}
+    }
+    return ret;
 }
 
-static void amplify_frame(MyDRCContext *s, AVFrame *frame)
+static bool analyze_frame(MyDRCContext *s, AVFrame *frame)
+{
+    const double rms_sum = get_frame_rms_sum(s, frame);
+    return push_rms_sum(s, rms_sum);
+}
+
+static void amplify_frame_by_factor(MyDRCContext *s, AVFrame *frame,
+				    double current_amplification_factor)
 {
     int nc = av_frame_get_channels(frame);
-    double current_amplification_factor =
-	    dB_to_scale(smooth_filter(s, s->gain_smooth));
     if (s->prev_amplification_factor == 0)
 	s->prev_amplification_factor = current_amplification_factor;
 
@@ -514,6 +552,12 @@ static void amplify_frame(MyDRCContext *s, AVFrame *frame)
     s->prev_amplification_factor = current_amplification_factor;
 }
 
+static void amplify_frame(MyDRCContext *s, AVFrame *frame)
+{
+    double factor = dB_to_scale(smooth_filter(s, s->gain_smooth));
+    amplify_frame_by_factor(s, frame, factor);
+}
+
 static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 {
     AVFilterContext *ctx = inlink->dst;
@@ -535,28 +579,13 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
                         AVFilterLink *outlink)
 {
-    if (!s->flush_once) {
-	int flush_size = s->min_size / 2 + s->filter_size / 2;
-	s->flush_buf = av_malloc(flush_size * sizeof(double));
-	// copy last filter elements, to be applied backwards
-	int off = cqueue_size(s->gain_smooth) - flush_size - 1;
-	av_assert0(off >= 0);
-	for (int i = 0; i < flush_size; i++)
-	    s->flush_buf[i] = cqueue_peek(s->gain_smooth, i + off);
-	s->flush_once = true;
-	s->flush_ix = flush_size;
-    }
-
-    if (--s->flush_ix < 0) {
-	AVFrame *out = ff_bufqueue_peek(&s->queue, 0);
-	av_assert0(out == NULL);
+    // TODO: flush properly
+    if (ff_bufqueue_peek(&s->queue, 0) == NULL)
 	return AVERROR_EOF;
-    }
-
-    update_gain_history(s, s->flush_buf[s->flush_ix]);
-    AVFrame *out = ff_bufqueue_get(&s->queue);
-    amplify_frame(s, out);
-    return ff_filter_frame(outlink, out);
+    AVFrame *frame = ff_bufqueue_get(&s->queue);
+    if (s->prev_amplification_factor)
+	amplify_frame_by_factor(s, frame, s->prev_amplification_factor);
+    return ff_filter_frame(outlink, frame);
 }
 
 static int request_frame(AVFilterLink *outlink)
@@ -579,6 +608,7 @@ static av_cold void uninit(AVFilterContext *ctx)
     av_freep(&s->fade_factors[0]);
     av_freep(&s->fade_factors[1]);
 
+    cqueue_free(s->gain_rms);
     cqueue_free(s->gain_min);
     cqueue_free(s->gain_smooth);
 
