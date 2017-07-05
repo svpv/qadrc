@@ -44,7 +44,7 @@ typedef struct MyDRCContext {
     double *weights;
 
     cqueue *gain_min;
-    cqueue *gain_filter;
+    cqueue *gain_smooth;
 
     bool flush_once;
     double *flush_buf;
@@ -299,8 +299,8 @@ static int config_input(AVFilterLink *inlink)
     if (!s->gain_min)
 	return AVERROR(ENOMEM);
 
-    s->gain_filter = cqueue_create(s->filter_size);
-    if (!s->gain_filter)
+    s->gain_smooth = cqueue_create(s->filter_size);
+    if (!s->gain_smooth)
 	return AVERROR(ENOMEM);
 
     precalculate_fade_factors(s->fade_factors, s->frame_len);
@@ -434,7 +434,7 @@ static bool update_gain_history(MyDRCContext *s, double current_gain_dB)
     bool ret = update_cqueue(s->gain_min, current_gain_dB);
     if (ret) {
 	double min = minimum_filter(s->gain_min);
-	ret = update_cqueue(s->gain_filter, min);
+	ret = update_cqueue(s->gain_smooth, min);
     }
     return ret;
 }
@@ -477,7 +477,7 @@ static void amplify_frame(MyDRCContext *s, AVFrame *frame)
 {
     int nc = av_frame_get_channels(frame);
     double current_amplification_factor =
-	    dB_to_scale(gaussian_filter(s, s->gain_filter));
+	    dB_to_scale(gaussian_filter(s, s->gain_smooth));
     if (s->prev_amplification_factor == 0)
 	s->prev_amplification_factor = current_amplification_factor;
 
@@ -539,10 +539,10 @@ static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
 	int flush_size = s->min_size / 2 + s->filter_size / 2;
 	s->flush_buf = av_malloc(flush_size * sizeof(double));
 	// copy last filter elements, to be applied backwards
-	int off = cqueue_size(s->gain_filter) - flush_size - 1;
+	int off = cqueue_size(s->gain_smooth) - flush_size - 1;
 	av_assert0(off >= 0);
 	for (int i = 0; i < flush_size; i++)
-	    s->flush_buf[i] = cqueue_peek(s->gain_filter, i + off);
+	    s->flush_buf[i] = cqueue_peek(s->gain_smooth, i + off);
 	s->flush_once = true;
 	s->flush_ix = flush_size;
     }
@@ -580,7 +580,7 @@ static av_cold void uninit(AVFilterContext *ctx)
     av_freep(&s->fade_factors[1]);
 
     cqueue_free(s->gain_min);
-    cqueue_free(s->gain_filter);
+    cqueue_free(s->gain_smooth);
 
     av_freep(&s->weights);
 
