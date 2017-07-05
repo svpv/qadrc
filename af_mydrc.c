@@ -353,7 +353,7 @@ static double get_frame_rms_dB(MyDRCContext *s, AVFrame *frame)
     return 10 * log10(mean);
 }
 
-static double minimum_filter(cqueue *q)
+static double min_filter(cqueue *q)
 {
 #if 0
     return cqueue_peek(q, cqueue_size(q) / 2);
@@ -368,7 +368,7 @@ static double minimum_filter(cqueue *q)
     return min;
 }
 
-static double gaussian_filter(MyDRCContext *s, cqueue *q)
+static double smooth_filter(MyDRCContext *s, cqueue *q)
 {
 #if 0
     return cqueue_peek(q, cqueue_size(q) / 2);
@@ -433,7 +433,7 @@ static bool update_gain_history(MyDRCContext *s, double current_gain_dB)
 {
     bool ret = update_cqueue(s->gain_min, current_gain_dB);
     if (ret) {
-	double min = minimum_filter(s->gain_min);
+	double min = min_filter(s->gain_min);
 	ret = update_cqueue(s->gain_smooth, min);
     }
     return ret;
@@ -477,7 +477,7 @@ static void amplify_frame(MyDRCContext *s, AVFrame *frame)
 {
     int nc = av_frame_get_channels(frame);
     double current_amplification_factor =
-	    dB_to_scale(gaussian_filter(s, s->gain_smooth));
+	    dB_to_scale(smooth_filter(s, s->gain_smooth));
     if (s->prev_amplification_factor == 0)
 	s->prev_amplification_factor = current_amplification_factor;
 
