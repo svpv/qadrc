@@ -58,6 +58,9 @@ typedef struct MyDRCContext {
     cqueue *gain_min;
     cqueue *gain_smooth;
 
+    int flush_state;
+    double *flush_buf;
+
     // gain computer
     double thresh;
     double ratio;
@@ -491,17 +494,23 @@ static double compute_gain(MyDRCContext *s, double x)
     }
 }
 
+static bool push_to_min(MyDRCContext *s, double gain_dB)
+{
+    bool ret = update_cqueue(s->gain_min, gain_dB);
+    if (ret) {
+	double min = min_filter(s->gain_min);
+	ret = update_cqueue(s->gain_smooth, min);
+    }
+    return ret;
+}
+
 static bool push_rms_sum(MyDRCContext *s, double sum)
 {
     bool ret = update_cqueue(s->gain_rms, sum);
     if (ret) {
 	double vol_dB = rms_filter(s->gain_rms, s->frame_len);
 	double gain_dB = compute_gain(s, vol_dB);
-	ret = update_cqueue(s->gain_min, gain_dB);
-	if (ret) {
-	    double min = min_filter(s->gain_min);
-	    ret = update_cqueue(s->gain_smooth, min);
-	}
+	ret = push_to_min(s, gain_dB);
     }
     return ret;
 }
@@ -579,12 +588,57 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
                         AVFilterLink *outlink)
 {
-    // TODO: flush properly
     if (ff_bufqueue_peek(&s->queue, 0) == NULL)
 	return AVERROR_EOF;
+
+    // The idea is to apply the exact same mirroring technique as was used
+    // at the beginning.  Thus the result should be completely symmetrical,
+    // as if the audio were played backwards and then reversed.
+    int flush_state = s->flush_state++;
+    if (flush_state == 0) {
+	// Add one more element to rms filter.
+	// E.g. it was 6789 to be applied at the end of 7,
+	// now it has to be 7789 to applied at the end of 8.
+	double rms_sum = cqueue_peek(s->gain_rms, 1);
+	push_rms_sum(s, rms_sum);
+    }
+    else if (flush_state <= s->min_size / 2) {
+	// flush the min filter
+	if (flush_state == 1) {
+	    int alloc_size = FFMAX(s->min_size, s->filter_size) / 2;
+	    s->flush_buf = av_malloc(alloc_size * sizeof(double));
+	    if (!s->flush_buf)
+		return AVERROR(ENOMEM);
+	    // copy last filter elements, to be applied backwards
+	    int off = s->min_size / 2 + 1;
+	    for (int i = 0; i < s->min_size / 2; i++)
+		s->flush_buf[i] = cqueue_peek(s->gain_min, i + off);
+	}
+	int i = s->min_size / 2 - flush_state;
+	double gain_dB = s->flush_buf[i];
+	push_to_min(s, gain_dB);
+    }
+    else if (flush_state <= s->min_size / 2 + s->filter_size / 2) {
+	// flush the smoothing filter
+	if (flush_state == s->min_size / 2 + 1) {
+	    int off = s->filter_size / 2 + 1;
+	    for (int i = 0; i < s->filter_size / 2; i++)
+		s->flush_buf[i] = cqueue_peek(s->gain_smooth, i + off);
+	}
+	int i = s->min_size / 2 + s->filter_size / 2 - flush_state;
+	double to_smooth = s->flush_buf[i];
+	update_cqueue(s->gain_smooth, to_smooth);
+    }
+    else {
+	// This should be the last frame.  Much like the first frame sets
+	// prev_amplification_factor to its current_amplification_factor,
+	// the last frame uses constant amplification for its samples
+	// by simply not updating s->gain_smooth.
+	av_assert0(flush_state == 1 + s->min_size / 2 + s->filter_size / 2);
+    }
+
     AVFrame *frame = ff_bufqueue_get(&s->queue);
-    if (s->prev_amplification_factor)
-	amplify_frame_by_factor(s, frame, s->prev_amplification_factor);
+    amplify_frame(s, frame);
     return ff_filter_frame(outlink, frame);
 }
 
@@ -613,6 +667,7 @@ static av_cold void uninit(AVFilterContext *ctx)
     cqueue_free(s->gain_smooth);
 
     av_freep(&s->weights);
+    av_freep(&s->flush_buf);
 
     ff_bufqueue_discard_all(&s->queue);
 }
