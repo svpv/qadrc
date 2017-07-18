@@ -16,7 +16,7 @@
 #include "libavutil/avassert.h"
 #include "libavutil/opt.h"
 
-#define FF_BUFQUEUE_SIZE 302
+#define FF_BUFQUEUE_SIZE 1005 // assume filter size=999 delays by 500
 #include "libavfilter/bufferqueue.h"
 
 #include "audio.h"
@@ -90,8 +90,8 @@ static const AVOption mydrc_options[] = {
     { "thresh", "threshold", OFFSET(thresh), AV_OPT_TYPE_DOUBLE, {.dbl = -35}, -70, 0, FLAGS },
     { "ratio", "compression ratio", OFFSET(ratio), AV_OPT_TYPE_DOUBLE, {.dbl = 1.5}, 1, 100, FLAGS },
     { "knee", "knee width", OFFSET(knee), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 70, FLAGS },
-    { "g", "set the gaussian filter size",     OFFSET(filter_size),       AV_OPT_TYPE_INT,    {.i64 = 31},     3,   301, FLAGS },
-    { "min", "set the min filter size",        OFFSET(min_size),          AV_OPT_TYPE_INT,    {.i64 =  3},     3,   301, FLAGS },
+    { "g", "set the gaussian filter size",     OFFSET(filter_size),       AV_OPT_TYPE_INT,    {.i64 = 131},    3,   999, FLAGS },
+    { "min", "set the min filter size",        OFFSET(min_size),          AV_OPT_TYPE_INT,    {.i64 =  11},    3,   999, FLAGS },
     { "wf", "write a waveform file",           OFFSET(wf_fname),          AV_OPT_TYPE_STRING, {.str = NULL},   0,     0, FLAGS },
     { NULL }
 };
