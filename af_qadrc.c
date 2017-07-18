@@ -26,7 +26,7 @@ typedef struct QADRCContext {
     double attack;
     double release;
     double delay;
-    double volume;
+    double gain0;
 
     double slope;
     double Tlo;
@@ -121,8 +121,8 @@ static int config_input(AVFilterLink *inlink)
     s->Tlo = s->thresh - s->knee / 2.0;
     s->Thi = s->thresh + s->knee / 2.0;
     s->knee_factor = s->slope / (s->knee * 2.0);
-    s->yR = s->volume;
-    s->yA = s->volume;
+    s->yR = s->gain0;
+    s->yA = s->gain0;
 
     const double Fs = inlink->sample_rate;
     s->delay_samples = s->delay * Fs / 1000;
@@ -445,7 +445,7 @@ static const AVOption qadrc_options[] = {
     { "attack", "attack time", OFFSET(attack), AV_OPT_TYPE_DOUBLE, {.dbl = 20}, 0, 1000, FLAGS },
     { "release", "release time", OFFSET(release), AV_OPT_TYPE_DOUBLE, {.dbl = 800}, 0, 9000, FLAGS },
     { "delay", "delay (lookahead) time", OFFSET(delay), AV_OPT_TYPE_DOUBLE, {.dbl = 10}, 0, 1000, FLAGS },
-    { "volume", "initial volume", OFFSET(volume), AV_OPT_TYPE_DOUBLE, {.dbl = -10}, -90, 0, FLAGS },
+    { "gain0", "initial gain", OFFSET(gain0), AV_OPT_TYPE_DOUBLE, {.dbl = -3}, -20, 0, FLAGS },
     { "wf", "write a waveform file", OFFSET(wf_fname), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, FLAGS },
     { NULL }
 };
