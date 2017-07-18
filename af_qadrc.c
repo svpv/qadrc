@@ -47,7 +47,16 @@ typedef struct QADRCContext {
 
     float *abuf;
     float lasta;
+
+    const char *wf_fname;
 } QADRCContext;
+
+#ifndef QADRC_WF
+#define QADRC_WF 0
+#endif
+#if QADRC_WF
+static FILE *wf_fp;
+#endif
 
 #if 1
 #include "simd_math_prims.h"
@@ -228,14 +237,17 @@ static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, siz
 	    float cL = dB_to_scale(cG);
 	    data[0][off+i] *= cL;
 	    data[1][off+i] *= cL;
-#if 0
-	    static int cnt;
-	    static double sum;
-	    sum += cL;
-	    if (++cnt == 480) {
-		fprintf(stderr, "\ncL=%f\n", sum / 480);
-		sum = 0;
-		cnt = 0;
+#if QADRC_WF
+	    if (wf_fp) {
+		static int cnt;
+		static double sum;
+		sum += cL;
+		if (++cnt == 480) {
+		    unsigned char c = sum / cnt * 255 + 0.5;
+		    putc_unlocked(c, wf_fp);
+		    sum = 0;
+		    cnt = 0;
+		}
 	    }
 #endif
 	}
@@ -371,6 +383,27 @@ static int request_frame(AVFilterLink *outlink)
     return ret;
 }
 
+static av_cold int init(AVFilterContext *ctx)
+{
+    QADRCContext *s = ctx->priv;
+
+    if (s->wf_fname) {
+#if QADRC_WF
+	wf_fp = fopen(s->wf_fname, "w");
+	if (!wf_fp) {
+	    av_log(ctx, AV_LOG_ERROR, "cannot open %s\n", s->wf_fname);
+	    return AVERROR(EINVAL);
+	}
+	fwrite("WF1", 4, 1, wf_fp);
+	fwrite("\0\0\0", 4, 1, wf_fp);
+#else
+	av_log(ctx, AV_LOG_WARNING, "waveform not enabled\n");
+#endif
+    }
+
+    return 0;
+}
+
 static av_cold void uninit(AVFilterContext *ctx)
 {
     QADRCContext *s = ctx->priv;
@@ -413,6 +446,7 @@ static const AVOption qadrc_options[] = {
     { "release", "release time", OFFSET(release), AV_OPT_TYPE_DOUBLE, {.dbl = 800}, 0, 9000, FLAGS },
     { "delay", "delay (lookahead) time", OFFSET(delay), AV_OPT_TYPE_DOUBLE, {.dbl = 10}, 0, 1000, FLAGS },
     { "volume", "initial volume", OFFSET(volume), AV_OPT_TYPE_DOUBLE, {.dbl = -10}, -90, 0, FLAGS },
+    { "wf", "write a waveform file", OFFSET(wf_fname), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, FLAGS },
     { NULL }
 };
 
@@ -441,6 +475,7 @@ static const AVFilterPad outputs[] = {
 AVFilter ff_af_qadrc = {
     .name	  = "qadrc",
     .description   = NULL_IF_CONFIG_SMALL("qaac dynamic range compressor"),
+    .init          = init,
     .uninit        = uninit,
     .query_formats = query_formats,
     .inputs	= inputs,
