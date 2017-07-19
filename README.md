@@ -19,7 +19,7 @@ qadrc
 This is a port of [qaac compressor](https://github.com/nu774/qaac/wiki/Dynamic-range-compression).
 It's a classic compressor (= with attack and release times, rooted in
 analog designs).  The implementation is specifically based on
-[Digital Dynamic Range Compressor Design - A Tutorial and Analysis](https://www.eecs.qmul.ac.uk/~josh/documents/GiannoulisMassbergReiss-dynamicrangecompression-JAES2012.pdf),
+[Digital Dynamic Range Compressor Design - A Tutorial and Analysis](https://www.eecs.qmul.ac.uk/~josh/documents/2012/GiannoulisMassbergReiss-dynamicrangecompression-JAES2012.pdf),
 JAES2012.  In addition, this implementation provides the delay (aka lookahead)
 control to cope better with sharp attacks.
 
