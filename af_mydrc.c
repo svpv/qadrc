@@ -166,12 +166,12 @@ static void precalculate_fade_factors(double *fade_factors[2], int frame_len)
     int pos;
 
     for (pos = 0; pos < frame_len; pos++) {
-        fade_factors[0][pos] = 1.0 - (step_size * pos);
-	av_assert0(fade_factors[0][pos] >= 0.0);
-	av_assert0(fade_factors[0][pos] <= 1.0);
+        fade_factors[0][pos] = 1.0 - (step_size * (pos + 0.5));
+	av_assert0(fade_factors[0][pos] > 0.0);
+	av_assert0(fade_factors[0][pos] < 1.0);
         fade_factors[1][pos] = 1.0 - fade_factors[0][pos];
-	av_assert0(fade_factors[1][pos] >= 0.0);
-	av_assert0(fade_factors[1][pos] <= 1.0);
+	av_assert0(fade_factors[1][pos] > 0.0);
+	av_assert0(fade_factors[1][pos] < 1.0);
     }
 }
 
