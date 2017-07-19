@@ -60,4 +60,8 @@ Other pieces
 ------------
 You can use [apicker](https://github.com/svpv/apicker)
 to pick the right part of the program (= its start and end times)
-before passing it down to `transcode`.
+before passing it down to `transcode`.  The picture below shows the `apicker`
+UI with `qadrc` and `mydrc` downward compression curves (the blue and the red
+one respectively).
+
+![apicker with DRC curves](apicker-drc.png "apicker with DRC curves")
