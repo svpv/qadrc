@@ -132,14 +132,16 @@ Transcode()
 	fi
 
 	if [[ $2 = *.[Mm][Pp]3 ]]; then
-		ffmpeg $ff_decode_pre -i "$1" ${ff_ss:+-ss $ff_ss} ${ff_t:+-t $ff_t} -vn \
+		ffmpeg \
+			$ff_decode_pre -i "$1" ${ff_ss:+-ss $ff_ss} ${ff_t:+-t $ff_t} -vn \
 			${AF:+-af "$AF"} -aq ${VBR:-$vbr} -y "$2"
 	else
 		adts=
 		[[ $2 != *.[Aa][Aa][Cc] ]] || adts='--adts'
 		priming=${priming:+--num-priming=$priming}
 		set -o pipefail
-		ffmpeg $ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
+		ffmpeg -v error \
+			$ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
 			${AF:+-af "$AF"} -acodec pcm_f32le -f wav - |
 		qaac -o "$2" $priming $adts --tvbr=${TVBR:-$tvbr} -
 		set +o pipefail
