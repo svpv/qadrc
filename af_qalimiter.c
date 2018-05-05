@@ -22,7 +22,7 @@
 #include "audio.h"
 #include "internal.h"
 
-#define m_thresh 0.9921875f
+#define m_thresh 0.97f
 
 /* fix a single spike between frames[fi1][f1_pos] and frames[fi2][f2_end] */
 static void fix_spike1(AVFilterLink *inlink, AVFrame **frames, int ch,
