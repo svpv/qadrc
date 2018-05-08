@@ -59,7 +59,7 @@ AACGain15()
 	local igain=${g1igain:?}
 	[ -z "$noclip" ] || igain=${g1igaink:?}
 	[ "$igain" = 0 ] || [ -n "$dry_run" ] ||
-	aacgain -g "$igain" "$1" >&2
+	aacgain -g "$igain" -s s "$1" >&2
 	rm $tmpdir/gain$$.log
 }
 
