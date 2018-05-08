@@ -1,10 +1,11 @@
-#!/bin/bash -efux
+#!/bin/bash -efu
 #
 # transcode - transcode radio programs for portable use
 #
 # Written by Alexey Tourbin.
 # This file is distributed as Public Domain.
 
+verbose=
 tmpdir=${TMPDIR:-/tmp}
 
 av0=$(readlink -ev "$0")
@@ -132,28 +133,52 @@ Transcode()
 	fi
 
 	if [[ $2 = *.[Mm][Pp]3 ]]; then
-		ffmpeg \
+		Conv1()
+		{
+		[ -z "$verbose" ] || set -x
+		ffmpeg -v error ${verbose:+-stats} \
 			$ff_decode_pre -i "$1" ${ff_ss:+-ss $ff_ss} ${ff_t:+-t $ff_t} -vn \
 			${AF:+-af "$AF"} -aq ${VBR:-$vbr} -y "$2"
+		}
+
+		if [ -z "$verbose" ]; then
+			Conv1 "$@"
+		else
+			(Conv1 "$@")
+			[ $? = 0 ]
+		fi
 	else
 		adts=
 		[[ $2 != *.[Aa][Aa][Cc] ]] || adts='--adts'
 		priming=${priming:+--num-priming=$priming}
+
+		Conv2()
+		{
 		set -o pipefail
+		[ -z "$verbose" ] || set -x
 		ffmpeg -v error \
 			$ff_decode_pre ${ff_ss:+-ss $ff_ss} -i "$1" ${ff_t:+-t $ff_t} -vn \
 			${AF:+-af "$AF"} -acodec pcm_f32le -f wav - |
-		qaac -o "$2" $priming $adts --tvbr=${TVBR:-$tvbr} -
-		set +o pipefail
+		qaac ${verbose:--s} -o "$2" $priming $adts --tvbr=${TVBR:-$tvbr} -
+		}
+
+		if [ -z "$verbose" ]; then
+			Conv2 "$@"
+			set +o pipefail
+		else
+			(Conv2 "$@")
+			[ $? = 0 ]
+		fi
 	fi
 
 	rm $tmpdir/gain$$.log
 }
 
-argv=$(getopt -n "${0##*/}" -o t:V: -al mono,stereo,no-drc,drc-range:,priming:,ss:,to:,tvbr: -- "$@")
+argv=$(getopt -n "${0##*/}" -o vt:V: -al verbose,mono,stereo,no-drc,drc-range:,priming:,ss:,to:,tvbr: -- "$@")
 eval set -- "$argv"
 while :; do
 	case "$1" in
+		-v|--verbose) verbose=' '; shift ;;
 		--mono) mono=yes; shift ;;
 		--stereo) mono=no; shift ;;
 		--no-drc) no_drc=1; shift ;;
