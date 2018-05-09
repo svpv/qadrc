@@ -13,7 +13,6 @@ av0dir=$(dirname "$av0")
 
 tmpdir=${TMPDIR:-/tmp}
 dry_run=
-noclip=
 
 AACGain15()
 {
@@ -54,22 +53,38 @@ AACGain15()
 		say "g1dbleftk=$dbleftk";
 		' -- ${rg1gain:?} ${eb1gain:?} ${rg1peak:?})
 	local $vars
-	echo rg1gain=$rg1gain eb1gain=$eb1gain g1db=$g1db eb1range=$eb1range eb1rlow=$eb1rlow rg1peak=$rg1peak
-	echo g1igain=$g1igain g1igaink=$g1igaink g1dbleft=$g1dbleft g1dbleftk=$g1dbleftk
-	local igain=${g1igain:?}
-	[ -z "$noclip" ] || igain=${g1igaink:?}
-	[ "$igain" = 0 ] || [ -n "$dry_run" ] ||
-	aacgain -g "$igain" -s s "$1" >&2
+	if [ -n "$dry_run" ]; then
+		echo rg1gain=$rg1gain eb1gain=$eb1gain g1db=$g1db \
+		     eb1range=$eb1range eb1rlow=$eb1rlow rg1peak=$rg1peak
+		local snow='\033[1;37m' red='\033[1;31m' nc='\033[0m'
+		[ -t 1 ] || snow= red= nc=
+		[ ${g1igain:?} = ${g1igaink:?} ] && red=
+		# Can go up, even with clipping restrictions?
+		if [ $g1igaink -gt 0 ]; then
+		    printf "${red}g1igain=$g1igain$nc ${snow}g1igaink=$g1igaink$nc"
+		# Or do they generally suggest we go down?
+		# (perhaps not as much as with clipping restrictions)
+		elif [ $g1igain -lt 0 ]; then
+		    printf "${snow}g1igain=$g1igain$nc ${red}g1igaink=$g1igaink$nc"
+		# Otherwise, no good plan (or nothing to do).
+		else
+		    printf "${red}g1igain=$g1igain g1igaink=$g1igaink$nc"
+		fi
+		echo '' g1dbleft=$g1dbleft g1dbleftk=$g1dbleftk
+	else
+		if [ $g1igaink -gt 0 ]; then
+		    echo >&2 "${0##*/}: applying gain $g1igaink to $1"
+		    aacgain -q -g $g1igaink -s s "$1" >&2
+		elif [ $g1igain -lt 0 ]; then
+		    echo >&2 "${0##*/}: applying gain $g1igain to $1"
+		    aacgain -q -g $g1igain -s s "$1" >&2
+		fi
+	fi
 	rm $tmpdir/gain$$.log
 }
 
 if [ "${1-}" = "-n" ]; then
 	dry_run=1
-	shift
-fi
-
-if [ "${1-}" = "-k" ]; then
-	noclip=1
 	shift
 fi
 
