@@ -12,6 +12,7 @@ av0dir=$(dirname "$av0")
 . $av0dir/dualmono.sh
 
 tmpdir=${TMPDIR:-/tmp}
+argc=1
 dry_run=
 
 AACGain15()
@@ -54,6 +55,7 @@ AACGain15()
 		' -- ${rg1gain:?} ${eb1gain:?} ${rg1peak:?})
 	local $vars
 	if [ -n "$dry_run" ]; then
+		[ $argc = 1 ] || echo "$1"
 		echo rg1gain=$rg1gain eb1gain=$eb1gain g1db=$g1db \
 		     eb1range=$eb1range eb1rlow=$eb1rlow rg1peak=$rg1peak
 		local snow='\033[1;37m' red='\033[1;31m' nc='\033[0m'
@@ -88,6 +90,7 @@ if [ "${1-}" = "-n" ]; then
 	shift
 fi
 
+argc=$#
 for f; do
 	AACGain15 "$f"
 done
