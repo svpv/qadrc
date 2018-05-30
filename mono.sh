@@ -26,6 +26,7 @@ MonoTry2()
 	q10=$( Calc2f "${gain:-${g1db:?}} + ${eb2S10:?} ")
 }
 
+# Main
 {
 	local ff_decode_pre=
 	if [[ $1 = *.[Mm][Pp]3 ]]; then
@@ -34,7 +35,7 @@ MonoTry2()
 
 	local g1db downmix=
 	local g1peak g1range g1rlow
-	local q999 q99 q95 q90 q75 q50 q25 q10 ismono=0 monoparts=
+	local q999 q99 q95 q90 q75 q50 q25 q10
 
 	# left channel needs correction?
 	local c0db=0 c0afs= c0afm=
@@ -69,7 +70,10 @@ MonoTry2()
 
 	g1db=$(Calc2f "(${rg1gain:?} + ${eb1gain:?}) / 2")
 	g1peak=$rg1peak g1range=$eb1range g1rlow=$eb1rlow
+}
 
+MonoAnalysis()
+{
 	if [ $g0ch -gt 1 ]; then
 		q999=$(Calc2f "${gain:-${g1db:?}} + ${eb4S999:?}")
 		q99=$( Calc2f "${gain:-${g1db:?}} + ${eb4S99:?} ")

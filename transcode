@@ -35,21 +35,17 @@ gain=
 # quality control
 VBR= TVBR=
 
-Transcode()
+MonoStuff()
 {
-	ffseek
-
-	. $av0dir/mono.sh
+	local ismono=0
+	MonoAnalysis "$1"
 
 	case $mono in
 		no) ismono=$(Calc "${ismono:?} >= 2 ? $ismono : 0") ;;
 		yes) ismono=9 ;;
 	esac
 
-	local vbr=4 tvbr=82
-	[ ${g0brate:?} -lt 180 ] || vbr=3 tvbr=91
-
-	if [ ${ismono:?} -ge 2 ]; then
+	if [ $ismono -ge 2 ]; then
 		vbr=4
 	else
 		ismono=0
@@ -66,17 +62,7 @@ Transcode()
 		fi
 	fi
 
-	if [[ $VBR$vbr = 3 && $2 = *.[Mm][Pp]3 ]]; then
-		vbr=3$(zenity --title VBR \
-			--text $'Select VBR for\n'"$2" \
-			--column VBR --list V4 V3) ||:
-		vbr=${vbr#3V}
-	fi
-
-	# -af chain
-	local AF=${downmix:+$downmix,}
-
-	if [ ${ismono:?} -gt 0 ]; then
+	if [ $ismono -gt 0 ]; then
 		if [ ${g0ch:?} -gt 1 ]; then
 			: ${c0afm:='pan=1c|c0=0.5*c0+0.5*c1'}
 			AF=${AF:+$AF,}${c0afm:?}
@@ -88,6 +74,34 @@ Transcode()
 		if [ -n "$monoparts" ]; then
 			AF=${AF:+$AF,}monoparts=${monoparts//,/|}
 		fi
+	fi
+}
+
+Transcode()
+{
+	ffseek
+
+	local g0brate
+	. $av0dir/mono.sh
+
+	# -af chain
+	local AF=${downmix:+$downmix,}
+
+	local vbr=4 tvbr=82
+	[ ${g0brate:-320} -lt 180 ] || vbr=3 tvbr=91
+
+	if [ "$mono" = NO ]; then
+		[ ${g0ch:?} -gt 1 ] ||
+		echo >&2 "warning: cannot force stereo on mono input"
+	else
+		MonoStuff "$1"
+	fi
+
+	if [[ $VBR$vbr = 3 && $2 = *.[Mm][Pp]3 ]]; then
+		vbr=3$(zenity --title VBR \
+			--text $'Select VBR for\n'"$2" \
+			--column VBR --list V4 V3) ||:
+		vbr=${vbr#3V}
 	fi
 
 	local drc=
@@ -174,13 +188,14 @@ Transcode()
 	rm $tmpdir/gain$$.log
 }
 
-argv=$(getopt -n "${0##*/}" -o vt:V: -al verbose,mono,stereo,no-drc,drc-range:,priming:,ss:,to:,tvbr: -- "$@")
+argv=$(getopt -n "${0##*/}" -o vt:V: -al verbose,mono,stereo,force-stereo,no-drc,drc-range:,priming:,ss:,to:,tvbr: -- "$@")
 eval set -- "$argv"
 while :; do
 	case "$1" in
 		-v|--verbose) verbose=' '; shift ;;
 		--mono) mono=yes; shift ;;
 		--stereo) mono=no; shift ;;
+		--force-stereo) mono=NO; shift ;;
 		--no-drc) no_drc=1; shift ;;
 		--drc-range) drc_range=${2:?}; shift 2;;
 		--priming) priming=${2:?}; shift 2 ;;
