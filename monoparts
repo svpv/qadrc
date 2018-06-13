@@ -187,7 +187,7 @@ sub parse_ebur128_log {
 		splice @{$$_{M}}, 0, MSIZE1, ($$_{M}[MSIZE1]) x MSIZE1;
 		splice @{$$_{S}}, 0, SSIZE1, ($$_{S}[SSIZE1]) x SSIZE1;
 	}
-	return @{$eb[-1]{S}};
+	return @{$eb[-1]{M}};
 }
 
 my @data = parse_ebur128_log;
