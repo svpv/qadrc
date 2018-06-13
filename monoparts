@@ -161,11 +161,13 @@ use Getopt::Long qw(GetOptions);
 GetOptions "gain=f" => \my $gain, "ss=s" => \my $ss
 	or die "GetOptions failed";
 
+use constant dBmin => -60;
+
 sub lufs {
 	my $db = shift;
-	return -60 if $db != $db; # NaN
+	return dBmin if $db != $db; # NaN
 	$db = 0 + sprintf "%.2f", 18 + $gain + $db;
-	return -60 if $db < -60;
+	return dBmin if $db < dBmin;
 	return 0 if $db > 0;
 	return $db;
 }
@@ -191,8 +193,6 @@ sub parse_ebur128_log {
 my @data = parse_ebur128_log;
 
 my $dmax = 0;
-my $dmin = -60;
-
 my $radius = 25;
 my @smooths;
 my @peaks;
@@ -293,7 +293,7 @@ sub i2cr ($) {
 }
 
 sub y2cr ($) {
-	HH - ($_[0] - $dmin) / ($dmax - $dmin) * HH - 0.5;
+	HH - ($_[0] - dBmin) / ($dmax - dBmin) * HH - 0.5;
 }
 
 sub draw_part ($$$+) {
