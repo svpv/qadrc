@@ -286,7 +286,7 @@ sub key_press {
 }
 
 our $WW = int 0.5 + @data / 5;
-use constant HH => 640;
+use constant HH => 600;
 
 sub i2cr ($) {
 	0.5 + $_[0] / 5;
@@ -315,6 +315,14 @@ sub create_image {
 	$cr->set_source_rgb(1, 1, 1);
 	$cr->set_operator('source');
 	$cr->paint;
+	# -40db guideline
+	$cr->set_source_rgb(0.8, 0.3, 0.8);
+	$cr->move_to(  0, y2cr -40);
+	$cr->line_to($WW, y2cr -40);
+	$cr->set_dash(1, 1, 2);
+	$cr->stroke;
+	$cr->stroke;
+	$cr->set_dash(0);
 	# data bg
 	$cr->set_source_rgb(0.8, 0.8, 0.8);
 	$cr->move_to(0, HH);
