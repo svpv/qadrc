@@ -37,9 +37,6 @@ VBR= TVBR=
 
 MonoStuff()
 {
-	local ismono=0
-	MonoAnalysis "$1"
-
 	case $mono in
 		no) ismono=$(Calc "${ismono:?} >= 2 ? $ismono : 0") ;;
 		yes) ismono=9 ;;
@@ -64,13 +61,9 @@ MonoStuff()
 
 	if [ $ismono -gt 0 ]; then
 		if [ ${g0ch:?} -gt 1 ]; then
-			: ${c0afm:='pan=1c|c0=0.5*c0+0.5*c1'}
-			AF=${AF:+$AF,}${c0afm:?}
+			AF=${AF:+$AF,}pan='1c|c0=0.5*c0+0.5*c1'
 		fi
 	else
-		if [ ${c0db:?} != 0 ]; then
-			AF=${AF:+$AF,}${c0afs:?}
-		fi
 		if [ -n "$monoparts" ]; then
 			AF=${AF:+$AF,}monoparts=${monoparts//,/|}
 		fi

@@ -23,7 +23,12 @@ IsMono()
 {
 	ffseek
 	. $av0dir/mono.sh
-	echo c0db=$c0db g1db=$g1db q999=$q999 q99=$q99 q10=$q10 ismono=$ismono monoparts=$monoparts
+	local and=
+	for var in g1db q{999,995,99}{s,m} ismono; do
+	    echo -n "$and$var=${!var}"
+	    and=' '
+	done
+	echo
 	rm $tmpdir/gain$$.log
 }
 
