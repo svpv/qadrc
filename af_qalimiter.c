@@ -63,7 +63,7 @@ static void fix_spike1(AVFilterLink *inlink, AVFrame **frames, int ch,
     }
 }
 
-/* search for a peak (above threshold) */
+/* search for a peak (above the threshold) */
 static void find_peak(AVFrame **frames, int ch,
 	int fi1, size_t f1_pos, int fi2, size_t f2_end,
 	int *peak_fi, size_t *peak_pos, float *peak_val)
@@ -82,7 +82,7 @@ static void find_peak(AVFrame **frames, int ch,
 	if (i == end)
 		continue;
 
-	/* found peak */
+	/* found a peak */
 	*peak_fi = fi;
 	*peak_pos = i;
 	*peak_val = x[i];
@@ -130,7 +130,7 @@ static void find_spike_start(AVFrame **frames, int ch,
     *start_pos = 0;
 }
 
-/* search to the end of the spike and update peak value */
+/* search to the end of the spike and update the peak value */
 static void find_spike_end(AVFrame **frames, int ch,
 	int peak_fi, size_t peak_pos, int fi2,
 	int *end_fi, size_t *end_end,
