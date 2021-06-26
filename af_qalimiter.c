@@ -348,14 +348,21 @@ static int query_formats(AVFilterContext *ctx)
     AVFilterFormats *formats = NULL;
     AVFilterChannelLayouts *layouts;
 
-    ff_add_format(&formats, AV_SAMPLE_FMT_FLTP);
-    ff_set_common_formats(ctx, formats);
+    int ret;
+    ret = ff_add_format(&formats, AV_SAMPLE_FMT_FLTP);
+    if (ret < 0) return ret;
+    ret = ff_set_common_formats(ctx, formats);
+    if (ret < 0) return ret;
 
     layouts = ff_all_channel_layouts();
-    ff_set_common_channel_layouts(ctx, layouts);
+    if (!layouts) return AVERROR(ENOMEM);
+    ret = ff_set_common_channel_layouts(ctx, layouts);
+    if (ret < 0) return ret;
 
     formats = ff_all_samplerates();
-    ff_set_common_samplerates(ctx, formats);
+    if (!formats) return AVERROR(ENOMEM);
+    ret = ff_set_common_samplerates(ctx, formats);
+    if (ret < 0) return ret;
 
     return 0;
 }
