@@ -134,6 +134,7 @@ static int config_input(AVFilterLink *inlink)
     return 0;
 }
 
+/* process input samples and fill a[] coefficients */
 static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a)
 {
     float **data = (float **) frame->extended_data;
@@ -217,6 +218,7 @@ static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a
     }
 }
 
+/* apply a[] coefficients to samples */
 static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, size_t n)
 {
     /* We now have dB coefficients which we need to convert to linear domain,
@@ -291,12 +293,16 @@ static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, siz
     }
 }
 
+/* apply a[] coefficients to the delayed samples */
 static int apply(QADRCContext *s, AVFilterLink *outlink,
 	int fmt, unsigned nc, float *a, size_t nsamples)
 {
     if (s->total_samples >= s->delay_samples)
 	s->total_samples += nsamples;
     else {
+	/* When we apply a[] coefficients, we look backwards.  Therefore,
+	 * we should throw away the initial segment of a[], the one that
+	 * applies to "pre-input". */
 	size_t off = s->delay_samples - s->total_samples;
 	s->total_samples += nsamples;
 	if (s->total_samples <= s->delay_samples)
@@ -314,20 +320,21 @@ static int apply(QADRCContext *s, AVFilterLink *outlink,
 	float **data0 = (float **) f0->extended_data;
 	apply1(data0, s->fpos, fmt, nc, a, apply_samples);
 	if (f0samples > nsamples) {
+	    /* all a[] coefficients applied, frame incomplete */
 	    s->fpos += nsamples;
 	    break;
         }
-	else {
-	    ret |= ff_filter_frame(outlink, f0);
-	    s->nframes--;
-	    memmove(s->frames, s->frames + 1, s->nframes * sizeof(AVFrame *));
-	    s->fpos = 0;
-	    nsamples -= apply_samples;
-	    if (nsamples == 0)
-		break;
-	    av_assert0(s->nframes > 0);
-	    a += apply_samples;
-        }
+	/* flush the frame */
+	ret |= ff_filter_frame(outlink, f0);
+	s->nframes--;
+	memmove(s->frames, s->frames + 1, s->nframes * sizeof(AVFrame *));
+	s->fpos = 0;
+	/* another iteration? */
+	nsamples -= apply_samples;
+	if (nsamples == 0)
+	    break;
+	av_assert0(s->nframes > 0);
+	a += apply_samples;
     }
 
     return ret;
