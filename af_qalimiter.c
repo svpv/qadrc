@@ -47,7 +47,7 @@ static void fix_spike1(AVFilterLink *inlink, AVFrame **frames, int ch,
 
 	if (peak < m_thresh * 2.0) {
 	    float a = (peak - m_thresh) / (peak * peak);
-	    if (xpeak > 0) a = - a;
+	    if (xpeak > 0) a = -a;
 	    for (size_t i = begin; i < end; ++i)
 		x[i] = x[i] + a * x[i] * x[i];
 	}
@@ -55,15 +55,14 @@ static void fix_spike1(AVFilterLink *inlink, AVFrame **frames, int ch,
 	    float u = peak, v = m_thresh;
 	    float a = (u - 2 * v) / (u * u * u);
 	    float b = (3 * v - 2 * u) / (u * u);
-	    if (xpeak < 0)
-		b *= -1.0;
+	    if (xpeak < 0) b = -b;
 	    for (size_t i = begin; i < end; ++i)
 		x[i] = x[i] + b * x[i] * x[i] + a * x[i] * x[i] * x[i];
 	}
     }
 }
 
-/* search for a peak (above the threshold) */
+/* search for a peak (any value above the threshold) */
 static void find_peak(AVFrame **frames, int ch,
 	int fi1, size_t f1_pos, int fi2, size_t f2_end,
 	int *peak_fi, size_t *peak_pos, float *peak_val)
@@ -80,7 +79,7 @@ static void find_peak(AVFrame **frames, int ch,
 	    if (x[i] > m_thresh || x[i] < -m_thresh)
 		break;
 	if (i == end)
-		continue;
+	    continue;
 
 	/* found a peak */
 	*peak_fi = fi;
@@ -90,7 +89,7 @@ static void find_peak(AVFrame **frames, int ch,
     }
 }
 
-/* when a peak is found, search backwards for spike start */
+/* when a peak is found, search backwards where the spike starts */
 static void find_spike_start(AVFrame **frames, int ch,
 	int peak_fi, size_t peak_pos,
 	int *start_fi, size_t *start_pos,
@@ -120,17 +119,17 @@ static void find_spike_start(AVFrame **frames, int ch,
 	}
 	if (pos < 0)
 	    continue;
-	/* found intersection */
+	/* found an intersection */
 	*start_fi = fi;
 	*start_pos = pos + 1;
 	return;
     }
-    /* assume leftmost */
+    /* assume the leftmost */
     *start_fi = 0;
     *start_pos = 0;
 }
 
-/* search to the end of the spike and update the peak value */
+/* search for the end of the spike and update the peak value */
 static void find_spike_end(AVFrame **frames, int ch,
 	int peak_fi, size_t peak_pos, int fi2,
 	int *end_fi, size_t *end_end,
@@ -146,7 +145,7 @@ static void find_spike_end(AVFrame **frames, int ch,
 	float p = *peak_val;
 
 	if (p < 0) {
-	    /* the spike is below x-axis */
+	    /* the spike is below the x-axis */
 	    if (x[end-1] < 0) {
 		for (; i < end && x[i] < 0; i++)
 		    if (x[i] < p)
@@ -159,7 +158,7 @@ static void find_spike_end(AVFrame **frames, int ch,
 	    }
 	}
 	else {
-	    /* the spike is above x-axis */
+	    /* the spike is above the x-axis */
 	    if (x[end-1] > 0) {
 		for (; i < end && x[i] > 0; i++)
 		    if (x[i] > p)
@@ -181,7 +180,7 @@ static void find_spike_end(AVFrame **frames, int ch,
 	*end_end = i;
 	return;
     }
-    /* assume rightmost */
+    /* assume the rightmost */
     *end_fi = fi2;
     *end_end = frames[fi2]->nb_samples;
 }
@@ -190,7 +189,7 @@ static void fix_spikes(AVFilterLink *inlink, AVFrame **frames, int ch,
 	int fi1, size_t f1_pos, int fi2, size_t f2_end)
 {
     while (1) {
-	/* find peak */
+	/* find a peak */
 	int peak_fi;
 	size_t peak_pos;
 	float peak_val = 0;
@@ -199,13 +198,13 @@ static void fix_spikes(AVFilterLink *inlink, AVFrame **frames, int ch,
 	if (peak_val == 0)
 	    return;
 
-	/* find spike start */
+	/* find the start of the spike */
 	int start_fi;
 	size_t start_pos;
 	find_spike_start(frames, ch, peak_fi, peak_pos,
 		&start_fi, &start_pos, peak_val);
 
-	/* find spike end */
+	/* find the end of the spike and uptdate the peak value */
 	int end_fi;
 	size_t end_end;
 	find_spike_end(frames, ch, peak_fi, peak_pos, fi2,
@@ -223,7 +222,7 @@ static void fix_spikes(AVFilterLink *inlink, AVFrame **frames, int ch,
 }
 
 /* find the end limit up to which the buffer can be processed;
- * that is, up to the last intersection with x-axis */
+ * that is, up to the last intersection with the x-axis */
 static size_t find_channel_end(AVFrame *frame, int ch)
 {
     float *x = (float *) frame->extended_data[ch];
@@ -291,8 +290,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     int nch = inlink->channels;
     for (int ch = 0; ch < nch; ch++) {
 	size_t end = find_channel_end(frame, ch);
-	if (end == 0)
-	    // no intersection with x-axis
+	if (end == 0) // no intersection with the x-axis
 	    continue;
 	int full = (end == frame->nb_samples);
 	fix_spikes(inlink, s->frames, ch,
@@ -318,7 +316,7 @@ static int final_flush(AVFilterLink *inlink, AVFilterContext *ctx, QALimiterCont
 	    continue;
 	fix_spikes(inlink, s->frames, ch,
 		s->fi[ch], s->fpos[ch], s->nframes - 1,
-		s->frames[s->nframes-1]->nb_samples - 1);
+		s->frames[s->nframes-1]->nb_samples);
 	s->fi[ch] = s->nframes;
 	s->fpos[ch] = 0;
     }
