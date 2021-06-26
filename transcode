@@ -134,7 +134,7 @@ Transcode()
 	fi
 
 	local limiter
-	limiter=$(perl -le "print 1 if ${g1peak:?} + $g1db > -0.252")
+	limiter=$(perl -le "print 1 if ${g1peak:?} + $g1db > -0.999")
 	if [ -n "$limiter" ]; then
 		AF=${AF:+$AF,}qalimiter
 	fi
