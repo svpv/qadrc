@@ -103,25 +103,38 @@ static void find_spike_start(AVFrame **frames, int ch,
 
 	if (peak_val < 0) {
 	    if (x[0] < 0)
-		while (pos >= 0 && x[pos] < 0)
+		do
 		    pos--;
+		while (pos >= 0 && x[pos] < 0);
 	    else
-		while (x[pos] < 0)
+		do
 		    pos--;
+		while (x[pos] < 0);
 	}
 	else {
 	    if (x[0] > 0)
-		while (pos >= 0 && x[pos] > 0)
+		do
 		    pos--;
+		while (pos >= 0 && x[pos] > 0);
 	    else
-		while (x[pos] > 0)
+		do
 		    pos--;
+		while (x[pos] > 0);
 	}
 	if (pos < 0)
 	    continue;
-	/* found an intersection */
-	*start_fi = fi;
-	*start_pos = pos + 1;
+	/* found an intersection with the x-axis */
+	pos++;
+	if (pos < frames[fi]->nb_samples) {
+	    *start_fi = fi;
+	    *start_pos = pos;
+	}
+	else {
+	    av_assert0(pos == frames[fi]->nb_samples);
+	    av_assert0(fi < peak_fi);
+	    *start_fi = fi + 1;
+	    *start_pos = 0;
+	}
 	return;
     }
     /* assume the leftmost */
@@ -203,6 +216,7 @@ static void fix_spikes(AVFilterLink *inlink, AVFrame **frames, int ch,
 	size_t start_pos;
 	find_spike_start(frames, ch, peak_fi, peak_pos,
 		&start_fi, &start_pos, peak_val);
+	av_assert0(start_fi > fi1 || (start_fi == fi1 && start_pos >= f1_pos));
 
 	/* find the end of the spike and uptdate the peak value */
 	int end_fi;
