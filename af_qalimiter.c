@@ -150,47 +150,45 @@ static void find_spike_end(AVFrame **frames, int ch,
 {
     for (int fi = peak_fi; fi <= fi2; fi++) {
 	AVFrame *frame = frames[fi];
-	size_t begin = (fi == peak_fi) ? peak_pos : 0;
+
+	size_t pos = (fi == peak_fi) ? peak_pos + 1 : 0;
 	size_t end = frame->nb_samples;
 	float *x = (float *) frame->extended_data[ch];
 
-	size_t i = begin;
 	float p = *peak_val;
-
 	if (p < 0) {
 	    /* the spike is below the x-axis */
 	    if (x[end-1] < 0) {
-		for (; i < end && x[i] < 0; i++)
-		    if (x[i] < p)
-			p = x[i];
+		for (; pos < end && x[pos] < 0; pos++)
+		    if (p > x[pos])
+			p = x[pos];
 	    }
 	    else {
-		for (; x[i] < 0; i++)
-		    if (x[i] < p)
-			p = x[i];
+		for (; x[pos] < 0; pos++)
+		    if (p > x[pos])
+			p = x[pos];
 	    }
 	}
 	else {
 	    /* the spike is above the x-axis */
 	    if (x[end-1] > 0) {
-		for (; i < end && x[i] > 0; i++)
-		    if (x[i] > p)
-			p = x[i];
+		for (; pos < end && x[pos] > 0; pos++)
+		    if (p < x[pos])
+			p = x[pos];
 	    }
 	    else {
-		for (; x[i] > 0; i++)
-		    if (x[i] > p)
-			p = x[i];
+		for (; x[pos] > 0; pos++)
+		    if (p < x[pos])
+			p = x[pos];
 	    }
 	}
-
 	*peak_val = p;
 
-	if (i == end)
+	if (pos == end)
 	    continue;
-	/* found intersection */
+	/* found an intersection with the x-axis */
 	*end_fi = fi;
-	*end_end = i;
+	*end_end = pos;
 	return;
     }
     /* assume the rightmost */
@@ -223,6 +221,7 @@ static void fix_spikes(AVFilterLink *inlink, AVFrame **frames, int ch,
 	size_t end_end;
 	find_spike_end(frames, ch, peak_fi, peak_pos, fi2,
 		&end_fi, &end_end, &peak_val);
+	av_assert0(end_fi < fi2 || (end_fi == fi2 && end_end <= f2_end));
 
 	/* fix the spike */
 	fix_spike1(inlink, frames, ch,
