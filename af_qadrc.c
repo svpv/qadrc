@@ -364,18 +364,21 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
 static int final_flush(AVFilterLink *inlink, AVFilterContext *ctx, QADRCContext *s)
 {
     AVFilterLink *outlink = ctx->outputs[0];
-
-    AVFrame *f0 = s->frames[0];
-    size_t nsamples = f0->nb_samples - s->fpos;
     unsigned nc = inlink->channels;
 
+    size_t nsamples = 1024;
     float *a = s->abuf = av_realloc_f(s->abuf, nsamples, sizeof(float));
     int fmt = outlink->format | (nc <= 2 ? nc << 8 : 0);
 
     for (size_t i = 0; i < nsamples; i++)
 	a[i] = s->lasta;
 
-    return apply(s, outlink, fmt, nc, a, nsamples);
+    int ret = 0;
+    do {
+	size_t f0samples = s->frames[0]->nb_samples - s->fpos;
+	ret |= apply(s, outlink, fmt, nc, a, FFMIN(nsamples, f0samples));
+    } while (s->nframes);
+    return ret;
 }
 
 static int request_frame(AVFilterLink *outlink)
