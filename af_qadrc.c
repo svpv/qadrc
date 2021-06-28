@@ -138,7 +138,7 @@ static int config_input(AVFilterLink *inlink)
 static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a)
 {
     float **data = (float **) frame->extended_data;
-    const int nsamples = frame->nb_samples;
+    size_t nsamples = frame->nb_samples;
     /* We need to calculate peak level (xL, max among channels) and turn it
      * into dB (xG).  Unless the whole loop is vectorizable, the last step,
      * xL -> xG conversion, will be executed in a separate pass. */
@@ -164,7 +164,7 @@ static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a
     case AV_SAMPLE_FMT_FLTP:
 	for (size_t i = 0; i < nsamples; i++) {
 	    float xL = fabsf(data[0][i]);
-	    for (int j = 1; j < nc; j++) {
+	    for (unsigned j = 1; j < nc; j++) {
 		float xM = fabsf(data[j][i]);
 		if (xM > xL)
 		    xL = xM;
@@ -185,7 +185,7 @@ static void chew(QADRCContext *s, AVFrame *frame, int fmt, unsigned nc, float *a
 	av_assert0(fmt == AV_SAMPLE_FMT_FLT);
 	for (size_t i = 0, j = 0; i < nsamples; i++, j += nc) {
 	    float xL = fabsf(data[0][j]);
-	    for (size_t k = 1; k < nc; k++) {
+	    for (unsigned k = 1; k < nc; k++) {
 		float xM = fabsf(data[0][j+k]);
 		if (xM > xL)
 		    xL = xM;
@@ -270,7 +270,7 @@ static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, siz
     case AV_SAMPLE_FMT_FLTP:
 	for (size_t i = 0; i < n; i++) {
 	    float cL = a[i];
-	    for (int j = 0; j < nc; j++)
+	    for (unsigned j = 0; j < nc; j++)
 	        data[j][off+i] *= cL;
 	}
 	break;
@@ -287,7 +287,7 @@ static void apply1(float **data, size_t off, int fmt, unsigned nc, float *a, siz
 	off *= nc;
 	for (size_t i = 0, j = 0; i < n; i++, j += nc) {
 	    float cL = a[i];
-	    for (size_t k = 1; k < nc; k++)
+	    for (unsigned k = 1; k < nc; k++)
 		data[0][off+j+k] *= cL;
 	}
     }
@@ -346,7 +346,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     QADRCContext *s = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
 
-    int nsamples = frame->nb_samples;
+    size_t nsamples = frame->nb_samples;
     unsigned nc = inlink->channels;
 
     float *a = s->abuf = av_realloc_f(s->abuf, nsamples, sizeof(float));
