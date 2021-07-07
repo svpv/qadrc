@@ -581,23 +581,18 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
                         AVFilterLink *outlink)
 {
-    if (ff_bufqueue_peek(&s->queue, 0) == NULL)
-	return AVERROR_EOF;
-
     // The idea is to apply the exact same mirroring technique as was used
     // at the beginning.  Thus the result should be completely symmetrical,
     // as if the audio were played backwards and then reversed.
     int flush_state = s->flush_state++;
-    if (flush_state == 0) {
-	// Add one more element to rms filter.
-	// E.g. it was 6789 to be applied at the end of 7,
-	// now it has to be 7789 to applied at the end of 8.
+    if (flush_state < RMS_FILTER_SIZE / 2) {
+	// add trailing elements to the rms filter
 	double rms_sum = cqueue_peek(s->gain_rms, 1);
 	push_rms_sum(s, rms_sum);
     }
-    else if (flush_state <= s->min_size / 2) {
+    else if (flush_state < RMS_FILTER_SIZE / 2 + s->min_size / 2) {
 	// flush the min filter
-	if (flush_state == 1) {
+	if (flush_state == RMS_FILTER_SIZE / 2) {
 	    int alloc_size = FFMAX(s->min_size, s->filter_size) / 2;
 	    s->flush_buf = av_malloc(alloc_size * sizeof(double));
 	    if (!s->flush_buf)
@@ -611,9 +606,9 @@ static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
 	double gain_dB = s->flush_buf[i];
 	push_to_min(s, gain_dB);
     }
-    else if (flush_state <= s->min_size / 2 + s->filter_size / 2) {
+    else if (flush_state < RMS_FILTER_SIZE / 2 + s->min_size / 2 + s->filter_size / 2) {
 	// flush the smoothing filter
-	if (flush_state == s->min_size / 2 + 1) {
+	if (flush_state == RMS_FILTER_SIZE / 2 + s->min_size / 2) {
 	    int off = s->filter_size / 2 + 1;
 	    for (int i = 0; i < s->filter_size / 2; i++)
 		s->flush_buf[i] = cqueue_peek(s->gain_smooth, i + off);
@@ -623,11 +618,8 @@ static int flush_buffer(MyDRCContext *s, AVFilterLink *inlink,
 	update_cqueue(s->gain_smooth, to_smooth);
     }
     else {
-	// This should be the last frame.  Much like the first frame sets
-	// prev_amplification_factor to its current_amplification_factor,
-	// the last frame uses constant amplification for its samples
-	// by simply not updating s->gain_smooth.
-	av_assert0(flush_state == 1 + s->min_size / 2 + s->filter_size / 2);
+	av_assert0(ff_bufqueue_peek(&s->queue, 0) == NULL);
+	return AVERROR_EOF;
     }
 
     AVFrame *frame = ff_bufqueue_get(&s->queue);
