@@ -47,9 +47,11 @@ typedef struct MyDRCContext {
     // For each 100 ms input frame, its (partial) RMS sum is first computed.
     // It then undergoes the three stages of filtering, until the final gain
     // is known and applied to the frame:
-    // 1) 400 ms RMS out of 4 partial sums is computed; these 400 ms intervals
-    // are overlapping, as per EBU R128 (and so the data from 4 frames should
-    // take its full effect at the end of the second frame).
+    // 1) Since 100 ms is not enough to evaluate loudness, we calculate RMS of
+    // a 100 ms frame by combining it with adjacent frames, 2 on the left and 2
+    // on the right (500 ms in total), with different weights (the middle frame
+    // gets the highest weight).
+#define RMS_FILTER_SIZE 5
     // 2) For each RMS value, the gain is computed, and the minimum is taken
     // among a few adjacent gain values. (This is to cope better with short and
     // sudden bursts.)
@@ -308,7 +310,7 @@ static int config_input(AVFilterLink *inlink)
     if (!s->fade_factors[0] || !s->fade_factors[1] || !s->weights)
         return AVERROR(ENOMEM);
 
-    s->gain_rms = cqueue_create(4); // 400 ms
+    s->gain_rms = cqueue_create(RMS_FILTER_SIZE);
     if (!s->gain_rms)
 	return AVERROR(ENOMEM);
 
@@ -382,11 +384,15 @@ static double get_frame_rms_sum(MyDRCContext *s, AVFrame *frame)
 
 static double rms_filter(cqueue *q, int frame_len)
 {
-    double sum = 0.0;
     int qn = cqueue_size(q);
-    for (int i = 0; i < qn; i++)
-        sum += cqueue_peek(q, i);
-    double mean = FFMAX(sum / (qn * frame_len), DBL_EPSILON);
+    av_assert0(qn == 5);
+    double sum =
+	4 * cqueue_peek(q, 0) +
+	5 * cqueue_peek(q, 1) +
+	6 * cqueue_peek(q, 2) +
+	5 * cqueue_peek(q, 3) +
+	4 * cqueue_peek(q, 4) ;
+    double mean = fmax(sum / ((4 + 5 + 6 + 5 + 4) * frame_len), DBL_EPSILON);
     // 10*log10 instead of 20*log10 amounts for sqrt
     return 10 * log10(mean);
 }
@@ -434,23 +440,10 @@ static bool update_cqueue(cqueue *q, double val)
 
     av_assert0(qn < filter_size);
 
-    // First-time push: pad with the preceding virtual elements,
-    // e.g. [0] and [1] for n=5, before adding the middle element [2].
-    //
-    // The even case (e.g. n=4) is special, and is designed to assist 400 ms
-    // RMS averaging.  When the 4th 100 ms element is queued, it should produce
-    // the second RMS element.  This requires one preceding virtual element.
-    //
-    //     100 ms input      [0]        [1]           [2]           [3]
-    //     queue          [0][0]  [0][0][1]  [2][0][1][2]  [3][0][1][2]
-    //     400 ms RMS      ^                 [0]           [1]
-    //                     |
-    //                     `- this will be mirrored with [2], see below
-    //
-    // This makes sense, because the RMS level of [0][1][2][3] should take
-    // its full effect at the end of the [1] input frame.
+    // First-time push: no adjacent elements on the left,
+    // replicate the first value.
     if (qn == 0) {
-	for (int i = 0; i < (filter_size - 1) / 2 + 1; i++)
+	for (int i = 0; i < filter_size / 2 + 1; i++)
 	    cqueue_enqueue(q, val);
 	return false;
     }
@@ -462,7 +455,7 @@ static bool update_cqueue(cqueue *q, double val)
 
     // The queue is full for the first time.
     // Mirror elements, e.g. [4] and [3] into [0] and [1].
-    for (int i = 0; i < (filter_size - 1) / 2; i++)
+    for (int i = 0; i < filter_size / 2; i++)
 	*cqueue_peekp(q, i) = cqueue_peek(q, filter_size - i - 1);
     return true;
 }
