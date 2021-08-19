@@ -78,12 +78,12 @@ AACGain15()
 		echo '' g1dbleft=$g1dbleft g1dbleftk=$g1dbleftk
 	else
 		if [ $g1igaink -gt 0 ]; then
-		    echo >&2 "${0##*/}: applying gain $g1igaink to $1"
-		    aacgain -q -g $g1igaink -s s "$1" >&2
+		    printf "%s: applying gain %+d to %s\n" "${0##*/}" "$g1igaink" "$1"
+		    aacgain -q -g $g1igaink -s s "$1"
 		elif [ $g1igain -lt 0 ]; then
-		    echo >&2 "${0##*/}: applying gain $g1igain to $1"
-		    aacgain -q -g $g1igain -s s "$1" >&2
-		fi
+		    printf "%s: applying gain %+d to %s\n" "${0##*/}" "$g1igain" "$1"
+		    aacgain -q -g $g1igain -s s "$1"
+		fi >&2
 	fi
 	rm $tmpdir/gain$$.log
 }
