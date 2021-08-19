@@ -14,6 +14,8 @@ av0dir=$(dirname "$av0")
 tmpdir=${TMPDIR:-/tmp}
 argc=1
 dry_run=
+rgfrac=0.5
+db0=0
 
 AACGain15()
 {
@@ -31,12 +33,12 @@ AACGain15()
 		DualMono eb1
 	fi
 	vars=$(perl -e 'use v5.12;
-		my $db1 = shift;
-		my $db2 = shift;
-		my $peak = shift;
-		my $db = ($db1 + $db2) / 2;
+		my ($prog, $rgfrac, $db0, $db1, $db2, $peak) = @ARGV;
+		die "$prog: bad --rg value $rgfrac\n"
+			unless $rgfrac > 0 and $rgfrac < 1;
+		my $db = $db0 + $rgfrac * $db1 + (1 - $rgfrac) * $db2;
 		use POSIX qw(floor);
-		my $igain = floor 0.5 + $db / (5 * log(2) / log(10));
+		my $igain = 0 + sprintf "%.0f", $db / (5 * log(2) / log(10));
 		my $igain2db = $igain * (5 * log(2) / log(10));
 		my $igaink = $igain;
 		my $igaink2db = $igain2db;
@@ -52,7 +54,8 @@ AACGain15()
 		say "g1igaink=$igaink";
 		say "g1dbleft=$dbleft";
 		say "g1dbleftk=$dbleftk";
-		' -- ${rg1gain:?} ${eb1gain:?} ${rg1peak:?})
+		' -- "${0##*/}" "$rgfrac" "$db0" \
+			${rg1gain:?} ${eb1gain:?} ${rg1peak:?})
 	local $vars
 	if [ -n "$dry_run" ]; then
 		[ $argc = 1 ] || echo "$1"
@@ -85,10 +88,18 @@ AACGain15()
 	rm $tmpdir/gain$$.log
 }
 
-if [ "${1-}" = "-n" ]; then
-	dry_run=1
-	shift
-fi
+argv=$(getopt -n "${0##*/}" -o n -l rg:,db: -- "$@")
+eval set -- "$argv"
+
+while :; do
+	case "$1" in
+		-n) dry_run=1; shift ;;
+		--rg) rgfrac=${2:?}; shift 2 ;;
+		--db) db0=${2:?}; shift 2 ;;
+		--) shift; break ;;
+		*) echo >&2 "unrecognized option: $1"; false ;;
+	esac
+done
 
 argc=$#
 for f; do
